@@ -13,7 +13,7 @@ class OrchestratorAPI:
         self.vlan_mgr = vlan_mgr
         self.routing_mgr = routing_mgr
         self.round_robin_idx = 0
-        self.workers = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+        self.workers = ["10.0.0.1", "10.0.0.2","10.0.0.3"]
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
     
     def get_next_worker(self):

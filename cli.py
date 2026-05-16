@@ -1,4 +1,3 @@
-"""CLI Interface for Slice Manager with VLAN support"""
 import hashlib, logging, sys
 from database import Database
 from remote_executor import RemoteExecutor
