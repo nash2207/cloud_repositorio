@@ -22,6 +22,7 @@ monitor = HealthMonitor(db)
 class CLI:
     def __init__(self):
         self.current_user = None
+        self.current_slice = {"id": None, "user": None, "orchestrator": None}
     
     def hash_password(self, pwd):
         return hashlib.sha256(pwd.encode()).hexdigest()
@@ -87,6 +88,9 @@ class CLI:
         
         success, result = orchestrator.create_slice_with_vlans(self.current_user, slice_name, num_vms, vlan_config, base_image_path="/tmp/cirros.img")
         if success:
+            self.current_slice["id"] = result['slice_id']
+            self.current_slice["user"] = self.current_user
+            self.current_slice["orchestrator"] = orchestrator
             print(f"\nSlice created! ID: {result['slice_id']}")
         else:
             print(f"\nError: {result}")
