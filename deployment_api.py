@@ -20,19 +20,30 @@ class DeploymentAPI:
             macs.append(mac)
         return macs
     
-    def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, vlan_ids, base_image_path=None):
+    def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, vlan_ids, base_image_path=None, internet_enabled=False):
         try:
             vlan_ids = vlan_ids or []
             self.vnc_port_counter += 1
             vnc_port = self.vnc_port_counter
-            macs = self.generate_unique_macs(vm_id, count=min(3, len(vlan_ids)+1))
+            
+            interface_count = len(vlan_ids) + 1
+            if internet_enabled:
+                interface_count += 1
+            
+            macs = self.generate_unique_macs(vm_id, count=interface_count)
             mgmt_ip = f"10.60.7.{100 + vm_id % 100}"
             
-            interfaces = [
-                Interface("eth0", vlan_id=None, mac=macs[0], ip_config={"ip": mgmt_ip, "cidr": "10.60.7.0/24"})
-            ]
-            for idx, vlan_id in enumerate(vlan_ids[:2]):
-                interfaces.append(Interface(f"eth{idx+1}", vlan_id=vlan_id, mac=macs[idx+1] if idx+1 < len(macs) else f"{self.mac_base}:{vm_id%256:02x}:{idx+1:02x}"))
+            interfaces = []
+            mac_idx = 0
+            
+            if internet_enabled:
+                interfaces.append(Interface("eth0", vlan_id=400, mac=macs[mac_idx], 
+                                          ip_config={"ip": mgmt_ip, "cidr": "10.60.7.0/24", "gateway": "10.60.7.1"}))
+                mac_idx += 1
+            
+            for idx, vlan_id in enumerate(vlan_ids):
+                interfaces.append(Interface(f"eth{mac_idx}", vlan_id=vlan_id, mac=macs[mac_idx]))
+                mac_idx += 1
             
             image_path = base_image_path or self.base_image_path
             success, qcow_img = self.qcow_mgr.create_backing_image(worker_ip, vm_name, image_path, vlan_ids) if image_path else (True, None)
@@ -42,7 +53,7 @@ class DeploymentAPI:
             
             vm = VM(vm_id, vm_name, owner, worker_ip, vnc_port, interfaces, qcow_image=qcow_img)
             vm.status = "running"
-            logger.info(f"VM {vm_name} created (VNC: {vnc_port}, QCOW: {qcow_img})")
+            logger.info(f"VM {vm_name} created (VNC: {vnc_port}, QCOW: {qcow_img}, Internet: {internet_enabled})")
             return True, vm
         except Exception as e:
             logger.error(f"VM creation error: {e}")

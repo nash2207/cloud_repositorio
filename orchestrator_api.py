@@ -15,14 +15,14 @@ class OrchestratorAPI:
         self.round_robin_idx += 1
         return worker
     
-    def create_slice(self, username, slice_name, vlan_ids=None, topology_type="linear"):
+    def create_slice(self, username, slice_name, topology_type="linear"):
         user = self.db.get_user(username)
         if not user:
             return False, "User not found"
         
         try:
             slice_id = self.db.get_next_vm_id()
-            vlan_ids = vlan_ids or []
+            vlan_ids = [self.db.get_next_vlan_id(), self.db.get_next_vlan_id()]
             slice_obj = Slice(slice_id, username, vlan_ids, topology_type)
             slice_obj.status = "active"
             
@@ -39,9 +39,9 @@ class OrchestratorAPI:
             logger.error(f"Slice creation error: {e}")
             return False, str(e)
     
-    def add_vm_to_slice(self, username, slice_id, vm_name, vlan_ids=None, base_image_path=None):
+    def add_vm_to_slice(self, username, slice_id, vm_name, base_image_path=None, internet_enabled=False):
         user = self.db.get_user(username)
-        slice_data = self.db.get_slice(slice_id)
+        slice_data = self.db.get_slice(str(slice_id))
         
         if not user or not slice_data:
             return False, "User or Slice not found"
@@ -55,10 +55,12 @@ class OrchestratorAPI:
         try:
             vm_id = self.db.get_next_vm_id()
             worker_ip = self.get_next_worker()
-            vlan_ids = vlan_ids or slice_data.get("vlan_ids", [])
+            vlan_ids = slice_data.get("vlan_ids", [])
             
             success, vm = self.deployment_api.create_vm_with_qcow(
-                slice_id, vm_id, vm_name, username, worker_ip, vlan_ids, base_image_path
+                slice_id, vm_id, vm_name, username, worker_ip, vlan_ids, 
+                base_image_path=base_image_path,
+                internet_enabled=internet_enabled
             )
             if not success:
                 return False, "VM creation failed"

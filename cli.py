@@ -71,16 +71,13 @@ class CLI:
     
     def create_slice_menu(self):
         slice_name = input("\nSlice name: ").strip()
-        vlan_count = input("Number of VLANs (default 2): ").strip()
-        vlan_count = int(vlan_count) if vlan_count.isdigit() else 2
-        vlan_ids = [db.get_next_vlan_id() for _ in range(vlan_count)]
         
-        success, result = orchestrator.create_slice(self.current_user, slice_name, vlan_ids)
+        success, result = orchestrator.create_slice(self.current_user, slice_name)
         if success:
             self.current_slice["id"] = result.get('slice_id')
             self.current_slice["user"] = self.current_user
             self.current_slice["orchestrator"] = orchestrator
-            print(f"\n✅ Slice created! ID: {result['slice_id']}, VLANs: {vlan_ids}")
+            print(f"\n✅ Slice created! ID: {result['slice_id']}")
         else:
             print(f"\n❌ Error: {result}")
     
@@ -88,7 +85,24 @@ class CLI:
         slice_id = input("\nSlice ID: ").strip()
         vm_name = input("VM name: ").strip()
         
-        success, result = orchestrator.add_vm_to_slice(self.current_user, slice_id, vm_name)
+        print("\nAvailable images:")
+        print("1. cirros-0.6.2-x86_64-disk.img (Lightweight)")
+        print("2. focal-server-cloudimg-amd64.img (Ubuntu 20.04)")
+        image_choice = input("Choose image (1-2): ").strip()
+        
+        images = {
+            "1": "/tmp/vm_images/cirros-0.6.2-x86_64-disk.img",
+            "2": "/tmp/vm_images/focal-server-cloudimg-amd64.img"
+        }
+        base_image = images.get(image_choice, images["1"])
+        
+        internet = input("Enable internet access? (y/n): ").strip().lower() == 'y'
+        
+        success, result = orchestrator.add_vm_to_slice(
+            self.current_user, slice_id, vm_name, 
+            base_image_path=base_image, 
+            internet_enabled=internet
+        )
         if success:
             print(f"\n✅ VM added! ID: {result['vm_id']}, VNC: {result['vnc_port']}")
         else:

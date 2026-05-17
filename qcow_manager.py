@@ -10,15 +10,18 @@ class QCOWManager:
     def create_backing_image(self, worker_ip, vm_name, base_image_path, vlan_ids):
         """Create QCOW2 image with backing file (thin provisioning)"""
         try:
-            local_base = os.path.basename(base_image_path)
+            base_filename = os.path.basename(base_image_path)
             vm_image = f"{vm_name}_img.qcow2"
             
             cmd = f"""
             mkdir -p {self.base_dir}
+            if [ ! -f {self.base_dir}/{base_filename} ]; then
+                scp -o StrictHostKeyChecking=no ubuntu@10.0.10.4:{base_image_path} {self.base_dir}/
+            fi
             cd {self.base_dir}
-            qemu-img create -f qcow2 -b {local_base} -F qcow2 {vm_image}
+            qemu-img create -f qcow2 -b {base_filename} -F qcow2 {vm_image}
             """
-            success, _ = self.executor.execute(worker_ip, "", args=[cmd])
+            success, output = self.executor.execute_direct(worker_ip, cmd)
             return success, f"{self.base_dir}/{vm_image}" if success else None
         except Exception as e:
             logger.error(f"QCOW creation error: {e}")
