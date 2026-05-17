@@ -1,5 +1,8 @@
 import signal
 import sys
+from remote_executor import RemoteExecutor
+from database import Database
+from worker_discovery import WorkerDiscovery
 from cli import CLI
 
 # Global state for rollback
@@ -15,10 +18,13 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
+    # Initialize worker discovery
+    db = Database()
+    executor = RemoteExecutor()
+    discovery = WorkerDiscovery(executor)
+    discovery.discover_all(db)
+    
+    # Start CLI
     cli = CLI()
-    cli.current_slice = current_slice 
-    from worker_discovery import WorkerDiscovery
-
-    discovery = WorkerDiscovery(cli.executor)    
-    discovery.discover_all(cli.db)
+    cli.current_slice = current_slice
     cli.run()
