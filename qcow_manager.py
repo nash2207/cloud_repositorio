@@ -13,15 +13,22 @@ class QCOWManager:
             base_filename = os.path.basename(base_image_path)
             vm_image = f"{vm_name}_img.qcow2"
             
-            cmd = f"""
-            mkdir -p {self.base_dir}
-            if [ ! -f {self.base_dir}/{base_filename} ]; then
-                scp -o StrictHostKeyChecking=no ubuntu@10.0.10.4:{base_image_path} {self.base_dir}/
-            fi
-            cd {self.base_dir}
-            qemu-img create -f qcow2 -b {base_filename} -F qcow2 {vm_image}
-            """
-            success, output = self.executor.execute_direct(worker_ip, cmd)
+            # Copy base image from local (10.0.10.4) to worker if not exists
+            check_cmd = f"test -f {self.base_dir}/{base_filename} && echo 'exists' || echo 'missing'"
+            success, output = self.executor.execute_direct(worker_ip, check_cmd)
+            
+            if success and 'missing' in output:
+                logger.info(f"Copying base image to {worker_ip}...")
+                copy_cmd = f"ssh ubuntu@{worker_ip} 'mkdir -p {self.base_dir}' && scp {base_image_path} ubuntu@{worker_ip}:{self.base_dir}/"
+                result = subprocess.run(copy_cmd, shell=True, capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    logger.error(f"SCP failed: {result.stderr}")
+                    return False, None
+            
+            # Create backing image on worker
+            create_cmd = f"cd {self.base_dir} && qemu-img create -f qcow2 -b {base_filename} -F qcow2 {vm_image}"
+            success, output = self.executor.execute_direct(worker_ip, create_cmd)
+            
             return success, f"{self.base_dir}/{vm_image}" if success else None
         except Exception as e:
             logger.error(f"QCOW creation error: {e}")
