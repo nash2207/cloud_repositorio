@@ -1,9 +1,8 @@
+"""CLI Interface for Slice Manager"""
 import hashlib, logging, sys
 from database import Database
 from remote_executor import RemoteExecutor
 from deployment_api import DeploymentAPI
-from vlan_manager import VLANManager
-from routing_manager import RoutingManager
 from orchestrator_api import OrchestratorAPI
 from health_monitor import HealthMonitor
 
@@ -13,9 +12,7 @@ logger = logging.getLogger(__name__)
 db = Database()
 executor = RemoteExecutor()
 deployment = DeploymentAPI(executor)
-vlan_mgr = VLANManager(executor)
-routing_mgr = RoutingManager(executor)
-orchestrator = OrchestratorAPI(db, deployment, vlan_mgr, routing_mgr)
+orchestrator = OrchestratorAPI(db, deployment)
 monitor = HealthMonitor(db)
 
 class CLI:
@@ -47,19 +44,19 @@ class CLI:
             print("  MAIN MENU")
             print("="*50)
             print("1. View quota and resources")
-            print("2. Create slice (Linear/Ring)")
-            print("3. View my slices")
-            print("4. Delete slice")
+            print("2. Create VM")
+            print("3. View my VMs")
+            print("4. Delete VM")
             print("5. Logout")
             choice = input("\nChoice: ").strip()
             if choice == "1":
                 self.view_quota()
             elif choice == "2":
-                self.create_slice_menu()
+                self.create_vm_menu()
             elif choice == "3":
-                self.view_slices()
+                self.view_vms()
             elif choice == "4":
-                self.delete_slice_menu()
+                self.delete_vm_menu()
             elif choice == "5":
                 self.current_user = None
                 break
@@ -68,45 +65,32 @@ class CLI:
         user = db.get_user(self.current_user)
         if user:
             print(f"\nQuota: {user.get('used_vms', 0)}/{user.get('quota_vms', 10)} VMs used")
-            print(f"Slices: {len(user.get('slices', []))}")
     
-    def create_slice_menu(self):
-        slice_name = input("\nSlice name: ").strip()
-        num_vms = int(input("Number of VMs: ").strip())
-        topology = input("Topology (linear/ring) [linear]: ").strip() or "linear"
-        
+    def create_vm_menu(self):
+        vm_name = input("\nVM name: ").strip()
         vlan_ids = [db.get_next_vlan_id(), db.get_next_vlan_id()]
-        vlan_config = {
-            "vlan_ids": vlan_ids,
-            "topology": topology,
-            "vlans": [
-                {"id": vlan_ids[0], "cidr": "192.168.0.0/24", "gateway": "192.168.0.1", "dhcp": False, "internet": True},
-                {"id": vlan_ids[1], "cidr": "192.168.2.0/24", "gateway": "192.168.2.1", "dhcp": True, "internet": False}
-            ]
-        }
         
-        success, result = orchestrator.create_slice_with_vlans(self.current_user, slice_name, num_vms, vlan_config, base_image_path="/tmp/cirros.img")
+        success, result = orchestrator.create_vm(self.current_user, vm_name, vlan_ids)
         if success:
-            self.current_slice["id"] = result['slice_id']
+            self.current_slice["id"] = result.get('vm_id')
             self.current_slice["user"] = self.current_user
             self.current_slice["orchestrator"] = orchestrator
-            print(f"\nSlice created! ID: {result['slice_id']}")
+            print(f"\n✅ VM created! ID: {result['vm_id']}, VNC: {result['vnc_port']}")
         else:
-            print(f"\nError: {result}")
+            print(f"\n❌ Error: {result}")
     
-    def view_slices(self):
-        slices = db.get_all_slices_for_user(self.current_user)
-        if not slices:
-            print("\nNo slices found.")
+    def view_vms(self):
+        user = db.get_user(self.current_user)
+        vms = user.get('slices', [])
+        if not vms:
+            print("\nNo VMs found.")
             return
-        for s in slices:
-            print(f"\nSlice {s['slice_id']}: {s['status']} ({len(s.get('vms', []))} VMs)")
-            for vm in s.get("vms", []):
-                print(f"  - {vm['name']} (VNC: {vm['vnc_port']}) @ {vm['worker_ip']}")
+        for vm_id in vms:
+            print(f"  VM {vm_id}")
     
-    def delete_slice_menu(self):
-        slice_id = int(input("\nSlice ID: ").strip())
-        success, msg = orchestrator.delete_slice(self.current_user, slice_id)
+    def delete_vm_menu(self):
+        vm_id = input("\nVM ID: ").strip()
+        success, msg = orchestrator.delete_vm(self.current_user, vm_id)
         print(f"\n{msg}")
     
     def run(self):
