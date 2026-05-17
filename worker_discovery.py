@@ -1,6 +1,6 @@
 """Worker Discovery - Auto-detect worker specs via SSH"""
 import logging
-from remote_executor import RemoteExecutor
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +38,22 @@ class WorkerDiscovery:
             return None
     
     def _get_cores(self, worker_ip):
-        success, output = self.executor.execute(worker_ip, "", args=["nproc"])
-        return int(output.strip()) if success else 16
+        try:
+            result = subprocess.run(f"ssh ubuntu@{worker_ip} nproc", shell=True, capture_output=True, text=True, timeout=5)
+            return int(result.stdout.strip()) if result.returncode == 0 else 16
+        except:
+            return 16
     
     def _get_ram(self, worker_ip):
-        success, output = self.executor.execute(worker_ip, "", args=["free -g | grep Mem | awk '{print $2}'"])
-        return int(output.strip()) if success else 32
+        try:
+            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'free -g | grep Mem | awk \"{{print \\$2}}\"'", shell=True, capture_output=True, text=True, timeout=5)
+            return int(result.stdout.strip()) if result.returncode == 0 else 32
+        except:
+            return 32
     
     def _get_disk(self, worker_ip):
-        success, output = self.executor.execute(worker_ip, "", args=["df /tmp -B G | tail -1 | awk '{print $2}'"])
-        return int(output.strip().replace('G', '')) if success else 500
+        try:
+            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'df /tmp -B G | tail -1 | awk \"{{print \\$2}}\" | tr -d G'", shell=True, capture_output=True, text=True, timeout=5)
+            return int(result.stdout.strip()) if result.returncode == 0 else 500
+        except:
+            return 500
