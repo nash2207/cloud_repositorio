@@ -3,7 +3,7 @@ import subprocess, logging, os
 logger = logging.getLogger(__name__)
 
 class QCOWManager:
-    def __init__(self, remote_executor, base_dir="/tmp/vm_images"):
+    def __init__(self, remote_executor, base_dir="~/vm_images"):
         self.executor = remote_executor
         self.base_dir = base_dir
     
@@ -24,10 +24,15 @@ class QCOWManager:
                 if result.returncode != 0:
                     logger.error(f"SCP failed: {result.stderr}")
                     return False, None
+                logger.info(f"Base image copied successfully to {worker_ip}")
             
             # Create backing image on worker
             create_cmd = f"cd {self.base_dir} && qemu-img create -f qcow2 -b {base_filename} -F qcow2 {vm_image}"
             success, output = self.executor.execute_direct(worker_ip, create_cmd)
+            
+            if not success:
+                logger.error(f"QCOW creation failed: {output}")
+                return False, None
             
             return success, f"{self.base_dir}/{vm_image}" if success else None
         except Exception as e:
