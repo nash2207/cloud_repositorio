@@ -22,6 +22,7 @@ class DeploymentAPI:
     
     def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, vlan_ids, base_image_path=None):
         try:
+            vlan_ids = vlan_ids or []
             self.vnc_port_counter += 1
             vnc_port = self.vnc_port_counter
             macs = self.generate_unique_macs(vm_id, count=min(3, len(vlan_ids)+1))

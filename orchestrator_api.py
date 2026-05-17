@@ -24,7 +24,7 @@ class OrchestratorAPI:
             vm_id = self.db.get_next_vm_id()
             worker_ip = self.get_next_worker()
             success, vm = self.deployment_api.create_vm_with_qcow(
-                vm_id, vm_name, username, worker_ip, vlan_ids, base_image_path
+                vm_id, vm_id, vm_name, username, worker_ip, vlan_ids, base_image_path
             )
             if not success:
                 return False, "VM creation failed"
