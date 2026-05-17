@@ -44,20 +44,23 @@ class CLI:
             print("  MAIN MENU")
             print("="*50)
             print("1. View quota and resources")
-            print("2. Create VM")
-            print("3. View my VMs")
-            print("4. Delete VM")
-            print("5. Logout")
+            print("2. Create Slice")
+            print("3. Add VM to Slice")
+            print("4. View my Slices")
+            print("5. Delete Slice")
+            print("6. Logout")
             choice = input("\nChoice: ").strip()
             if choice == "1":
                 self.view_quota()
             elif choice == "2":
-                self.create_vm_menu()
+                self.create_slice_menu()
             elif choice == "3":
-                self.view_vms()
+                self.add_vm_menu()
             elif choice == "4":
-                self.delete_vm_menu()
+                self.view_slices()
             elif choice == "5":
+                self.delete_slice_menu()
+            elif choice == "6":
                 self.current_user = None
                 break
     
@@ -66,31 +69,50 @@ class CLI:
         if user:
             print(f"\nQuota: {user.get('used_vms', 0)}/{user.get('quota_vms', 10)} VMs used")
     
-    def create_vm_menu(self):
-        vm_name = input("\nVM name: ").strip()
-        vlan_ids = [db.get_next_vlan_id(), db.get_next_vlan_id()]
+    def create_slice_menu(self):
+        slice_name = input("\nSlice name: ").strip()
+        vlan_count = input("Number of VLANs (default 2): ").strip()
+        vlan_count = int(vlan_count) if vlan_count.isdigit() else 2
+        vlan_ids = [db.get_next_vlan_id() for _ in range(vlan_count)]
         
-        success, result = orchestrator.create_vm(self.current_user, vm_name, vlan_ids)
+        success, result = orchestrator.create_slice(self.current_user, slice_name, vlan_ids)
         if success:
-            self.current_slice["id"] = result.get('vm_id')
+            self.current_slice["id"] = result.get('slice_id')
             self.current_slice["user"] = self.current_user
             self.current_slice["orchestrator"] = orchestrator
-            print(f"\n✅ VM created! ID: {result['vm_id']}, VNC: {result['vnc_port']}")
+            print(f"\n✅ Slice created! ID: {result['slice_id']}, VLANs: {vlan_ids}")
         else:
             print(f"\n❌ Error: {result}")
     
-    def view_vms(self):
-        user = db.get_user(self.current_user)
-        vms = user.get('slices', [])
-        if not vms:
-            print("\nNo VMs found.")
-            return
-        for vm_id in vms:
-            print(f"  VM {vm_id}")
+    def add_vm_menu(self):
+        slice_id = input("\nSlice ID: ").strip()
+        vm_name = input("VM name: ").strip()
+        
+        success, result = orchestrator.add_vm_to_slice(self.current_user, slice_id, vm_name)
+        if success:
+            print(f"\n✅ VM added! ID: {result['vm_id']}, VNC: {result['vnc_port']}")
+        else:
+            print(f"\n❌ Error: {result}")
     
-    def delete_vm_menu(self):
-        vm_id = input("\nVM ID: ").strip()
-        success, msg = orchestrator.delete_vm(self.current_user, vm_id)
+    def view_slices(self):
+        user = db.get_user(self.current_user)
+        slice_ids = user.get('slices', [])
+        if not slice_ids:
+            print("\nNo Slices found.")
+            return
+        print("\n" + "="*50)
+        for slice_id in slice_ids:
+            slice_data = db.get_slice(slice_id)
+            if slice_data:
+                vm_count = len(slice_data.get("vms", []))
+                vlan_ids = slice_data.get("vlan_ids", [])
+                print(f"Slice {slice_id}: {vm_count} VMs, VLANs: {vlan_ids}")
+                for vm in slice_data.get("vms", []):
+                    print(f"  └─ VM {vm['vm_id']}: {vm['name']} (VNC: {vm['vnc_port']}, Worker: {vm['worker_ip']})")
+    
+    def delete_slice_menu(self):
+        slice_id = input("\nSlice ID: ").strip()
+        success, msg = orchestrator.delete_slice(self.current_user, slice_id)
         print(f"\n{msg}")
     
     def run(self):

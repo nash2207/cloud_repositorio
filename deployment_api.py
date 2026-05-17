@@ -58,3 +58,13 @@ class DeploymentAPI:
         except Exception as e:
             logger.error(f"Delete error: {e}")
             return False
+    
+    def delete_vm_dict(self, vm_dict):
+        try:
+            if vm_dict.get("qcow_image"):
+                self.qcow_mgr.delete_image(vm_dict.get("worker_ip"), vm_dict.get("qcow_image"))
+            logger.info(f"VM {vm_dict.get('name')} deleted")
+            return True
+        except Exception as e:
+            logger.error(f"Delete error: {e}")
+            return False
