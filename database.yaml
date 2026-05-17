@@ -1,6 +1,3 @@
-next_vlan_id: 100
-next_vm_id: 1000
-slices: {}
 users:
   admin:
     password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
@@ -14,3 +11,6 @@ users:
     slices: []
     used_vms: 0
     username: student
+slices: {}
+next_vlan_id: 100
+next_vm_id: 1000
