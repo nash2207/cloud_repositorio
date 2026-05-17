@@ -1,26 +1,22 @@
-"""Worker Discovery - Auto-detect worker specs via SSH"""
-import logging
-import subprocess
+import logging, subprocess
 
 logger = logging.getLogger(__name__)
 
 class WorkerDiscovery:
-    def __init__(self, remote_executor):
+    def __init__(self, remote_executor, workers=None):
         self.executor = remote_executor
-        self.workers = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+        self.workers = workers or ["10.0.10.1", "10.0.10.2", "10.0.10.3"]
     
     def discover_all(self, db):
-        """Discover specs for all workers and update DB"""
         for worker_ip in self.workers:
             specs = self.get_worker_specs(worker_ip)
             if specs:
                 db.data["workers"] = db.data.get("workers", {})
                 db.data["workers"][worker_ip] = specs
                 db.save()
-                logger.info(f"Worker {worker_ip} discovered: {specs}")
+                logger.info(f"Worker {worker_ip}: {specs}")
     
     def get_worker_specs(self, worker_ip):
-        """Get RAM, cores, disk via SSH"""
         try:
             specs = {
                 "ip": worker_ip,
@@ -39,21 +35,21 @@ class WorkerDiscovery:
     
     def _get_cores(self, worker_ip):
         try:
-            result = subprocess.run(f"ssh ubuntu@{worker_ip} nproc", shell=True, capture_output=True, text=True, timeout=5)
-            return int(result.stdout.strip()) if result.returncode == 0 else 16
-        except:
-            return 16
+            result = subprocess.run(f"ssh -o ConnectTimeout=10 ubuntu@{worker_ip} nproc", 
+                                  shell=True, capture_output=True, text=True, timeout=5)
+            return int(result.stdout.strip()) if result.returncode == 0 else 2
+        except: return 2
     
     def _get_ram(self, worker_ip):
         try:
-            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'free -g | grep Mem | awk \"{{print \\$2}}\"'", shell=True, capture_output=True, text=True, timeout=5)
-            return int(result.stdout.strip()) if result.returncode == 0 else 32
-        except:
-            return 32
+            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'free -g | grep Mem | awk \"{{print \\$2}}\"'", 
+                                  shell=True, capture_output=True, text=True, timeout=5)
+            return int(result.stdout.strip()) if result.returncode == 0 else 1
+        except: return 1
     
     def _get_disk(self, worker_ip):
         try:
-            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'df /tmp -B G | tail -1 | awk \"{{print \\$2}}\" | tr -d G'", shell=True, capture_output=True, text=True, timeout=5)
+            result = subprocess.run(f"ssh ubuntu@{worker_ip} 'df /tmp -B G | tail -1 | awk \"{{print \\$2}}\" | tr -d G'", 
+                                  shell=True, capture_output=True, text=True, timeout=5)
             return int(result.stdout.strip()) if result.returncode == 0 else 500
-        except:
-            return 500
+        except: return 500

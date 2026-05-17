@@ -1,16 +1,45 @@
+workers_list: ["10.0.10.1", "10.0.10.2", "10.0.10.3"]
+
 users:
   admin:
-    password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
-    quota_vms: 10
-    slices: []
-    used_vms: 0
     username: admin
-  student:
     password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
     quota_vms: 10
-    slices: []
     used_vms: 0
+    slices: []
+  student:
     username: student
+    password_hash: 8d969eef6ecad3c29a3a873fba8a4f7e04017d21ff0ea201e39de7ccc30e38e2
+    quota_vms: 6
+    used_vms: 0
+    slices: []
+
+workers:
+  10.0.10.1:
+    max_vms: 10
+    max_ram_gb: 1
+    max_cores: 2
+    max_disk_gb: 500
+    used_ram_gb: 0
+    used_cores: 0
+    used_disk_gb: 0
+  10.0.10.2:
+    max_vms: 10
+    max_ram_gb: 1
+    max_cores: 2
+    max_disk_gb: 500
+    used_ram_gb: 0
+    used_cores: 0
+    used_disk_gb: 0
+  10.0.10.3:
+    max_vms: 10
+    max_ram_gb: 1
+    max_cores: 2
+    max_disk_gb: 500
+    used_ram_gb: 0
+    used_cores: 0
+    used_disk_gb: 0
+
 slices: {}
-next_vlan_id: 100
 next_vm_id: 1000
+next_vlan_id: 100
