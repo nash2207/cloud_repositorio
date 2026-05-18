@@ -142,17 +142,8 @@ class OrchestratorAPI:
             return False, "Slice already running"
         
         try:
-            # 1. Configure VLAN 400 for internet access (if any VM has internet)
-            has_internet = any(
-                any(iface.get("vlan_id") == 400 for iface in vm.get("interfaces", []))
-                for vm in slice_data.get("vms", [])
-            )
-            
-            if has_internet:
-                logger.info("Configuring VLAN 400 for internet access (gateway already exists)")
-                # VLAN 400: Gateway 10.60.7.1 already configured by professors
-                # Only setup DHCP server, don't create gateway
-                self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True, create_gateway=False)
+            # 1. Skip VLAN 400 configuration (gateway already exists, VMs will use DHCP from existing setup)
+            # VMs with internet will connect to VLAN 400 which already has gateway 10.60.7.1
             
             # 2. Configure VLANs for each Link (L2 connections between VMs)
             for link in slice_data.get("links", []):

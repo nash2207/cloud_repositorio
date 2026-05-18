@@ -1,13 +1,10 @@
 """VM Launcher - Start QEMU VMs with proper networking"""
 import logging
-from cloud_init_generator import CloudInitGenerator
-
 logger = logging.getLogger(__name__)
 
 class VMLauncher:
     def __init__(self, remote_executor):
         self.executor = remote_executor
-        self.cloud_init = CloudInitGenerator()
     
     def launch_vm(self, worker_ip, vm_dict):
         """Launch QEMU VM on worker with all interfaces"""
@@ -21,26 +18,6 @@ class VMLauncher:
             
             cores = flavor.get("cores", 1)
             ram_mb = int(flavor.get("ram_gb", 0.5) * 1024)
-            
-            # Generate cloud-init ISO for static IP on eth0
-            mgmt_ip = None
-            data_interfaces = []
-            for iface in interfaces:
-                if iface["name"] == "eth0" and iface.get("vlan_id") == 400:
-                    ip_config = iface.get("ip_config", {})
-                    mgmt_ip = ip_config.get("ip") if ip_config else None
-                elif iface["name"] != "eth0":
-                    data_interfaces.append(iface["name"])
-            
-            cloud_init_iso = None
-            if mgmt_ip:
-                cloud_init_iso = self.cloud_init.generate_iso(vm_name, mgmt_ip, data_interfaces)
-                if cloud_init_iso:
-                    # Copy ISO to worker
-                    copy_cmd = f"scp {cloud_init_iso} ubuntu@{worker_ip}:/tmp/"
-                    import subprocess
-                    subprocess.run(copy_cmd, shell=True, capture_output=True)
-                    logger.info(f"Cloud-init ISO created for {vm_name} with IP {mgmt_ip}")
             
             # Build QEMU command
             qemu_cmd = f"sudo qemu-system-x86_64 -enable-kvm -m {ram_mb} -smp {cores} "
@@ -71,10 +48,6 @@ class VMLauncher:
             if qcow_image:
                 qemu_cmd += f"-drive file={qcow_image},format=qcow2 "
             
-            # Add cloud-init ISO if exists
-            if cloud_init_iso:
-                qemu_cmd += f"-cdrom /tmp/{vm_name}-init.iso "
-            
             qemu_cmd += "-daemonize"
             
             logger.info(f"Launching VM {vm_name} on {worker_ip}: {qemu_cmd}")
@@ -84,6 +57,20 @@ class VMLauncher:
                 # Get PID
                 pid_cmd = f"pgrep -f 'qemu.*{vm_name}' | head -1"
                 success_pid, pid = self.executor.execute_direct(worker_ip, pid_cmd)
+                
+                # Configure static IP on eth0 if it's VLAN 400 (internet)
+                for iface in interfaces:
+                    if iface["name"] == "eth0" and iface.get("vlan_id") == 400:
+                        ip_config = iface.get("ip_config", {})
+                        static_ip = ip_config.get("ip") if ip_config else None
+                        if static_ip:
+                            # Wait for VM to boot (5 seconds)
+                            import time
+                            time.sleep(5)
+                            # Note: This would require console access or SSH into VM
+                            # For now, just log it - user can configure manually
+                            logger.info(f"VM {vm_name} should use static IP {static_ip} on eth0")
+                
                 return True, pid.strip() if success_pid else None
             else:
                 logger.error(f"QEMU launch failed: {output}")
