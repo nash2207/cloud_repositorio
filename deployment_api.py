@@ -16,7 +16,8 @@ class DeploymentAPI:
     def generate_unique_macs(self, vm_id, count=3):
         macs = []
         for i in range(count):
-            mac = f"{self.mac_base}:{vm_id%256:02x}:{i:02x}"
+            # Generate 6-byte MAC address (QEMU format)
+            mac = f"52:54:00:{(vm_id >> 8) & 0xFF:02x}:{vm_id & 0xFF:02x}:{i:02x}"
             macs.append(mac)
         return macs
     
