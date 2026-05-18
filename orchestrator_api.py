@@ -150,8 +150,13 @@ class OrchestratorAPI:
             
             if has_internet:
                 logger.info("Configuring DHCP for VLAN 400 (gateway 10.60.7.1 already exists)")
+                # Clean up any previous VLAN 400 DHCP config first
+                self.vlan_manager.delete_vlan(400)
                 # VLAN 400: Gateway already configured by professors, only setup DHCP
-                self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True, create_gateway=False)
+                success = self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True, create_gateway=False)
+                if not success:
+                    logger.error("Failed to configure DHCP for VLAN 400")
+                    return False, "Failed to configure DHCP for VLAN 400"
             
             # 2. Configure VLANs for each Link (L2 connections between VMs)
             for link in slice_data.get("links", []):

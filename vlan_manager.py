@@ -54,6 +54,17 @@ class VLANManager:
                 logger.error(f"Failed to create DHCP port: {output}")
                 return False
             
+            # Wait for port to be created
+            import time
+            time.sleep(1)
+            
+            # Verify port exists before moving to namespace
+            verify_cmd = f"ip link show {dhcp_port}"
+            success, output = self.executor.execute_direct(self.network_node_ip, verify_cmd)
+            if not success:
+                logger.error(f"DHCP port {dhcp_port} was not created: {output}")
+                return False
+            
             logger.info(f"Moving {dhcp_port} to namespace {ns_name}")
             cmd3 = f"sudo ip link set {dhcp_port} netns {ns_name}"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd3)
