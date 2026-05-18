@@ -39,24 +39,55 @@ class VLANManager:
             dhcp_ip = f"{base_ip}.2"
             dhcp_range = f"{base_ip}.10,{base_ip}.250"
             
-            cmd = f"""
-            sudo ip netns add {ns_name} 2>/dev/null || true
-            sudo ovs-vsctl --may-exist add-port br-int {dhcp_port} tag={vlan_id} -- set interface {dhcp_port} type=internal
-            sudo ip link set {dhcp_port} netns {ns_name}
+            # Step by step to catch errors
+            logger.info(f"Creating namespace {ns_name}")
+            cmd1 = f"sudo ip netns add {ns_name} 2>/dev/null || true"
+            self.executor.execute_direct(self.network_node_ip, cmd1)
+            
+            logger.info(f"Creating DHCP port {dhcp_port} in VLAN {vlan_id}")
+            cmd2 = f"sudo ovs-vsctl --may-exist add-port br-int {dhcp_port} tag={vlan_id} -- set interface {dhcp_port} type=internal"
+            success, output = self.executor.execute_direct(self.network_node_ip, cmd2)
+            if not success:
+                logger.error(f"Failed to create DHCP port: {output}")
+                return False
+            
+            logger.info(f"Moving {dhcp_port} to namespace {ns_name}")
+            cmd3 = f"sudo ip link set {dhcp_port} netns {ns_name}"
+            success, output = self.executor.execute_direct(self.network_node_ip, cmd3)
+            if not success:
+                logger.error(f"Failed to move port to namespace: {output}")
+                return False
+            
+            logger.info(f"Configuring IP {dhcp_ip}/{mask} on {dhcp_port}")
+            cmd4 = f"""
             sudo ip netns exec {ns_name} ip addr add {dhcp_ip}/{mask} dev {dhcp_port} 2>/dev/null || true
             sudo ip netns exec {ns_name} ip link set dev lo up
             sudo ip netns exec {ns_name} ip link set dev {dhcp_port} up
-            sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true
-            sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8
             """
-            success, output = self.executor.execute_direct(self.network_node_ip, cmd, timeout=30)
+            self.executor.execute_direct(self.network_node_ip, cmd4)
             
-            if success:
-                logger.info(f"DHCP configured for VLAN {vlan_id} (range: {dhcp_range})")
+            logger.info(f"Starting dnsmasq in {ns_name} (range: {dhcp_range})")
+            cmd5 = f"sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true"
+            self.executor.execute_direct(self.network_node_ip, cmd5)
+            
+            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-dhcp --log-facility=/tmp/dnsmasq_vlan{vlan_id}.log"
+            success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
+            
+            if not success:
+                logger.error(f"Failed to start dnsmasq: {output}")
+                return False
+            
+            # Verify dnsmasq is running
+            verify_cmd = f"sudo ip netns exec {ns_name} pgrep dnsmasq"
+            success, pid = self.executor.execute_direct(self.network_node_ip, verify_cmd)
+            
+            if success and pid.strip():
+                logger.info(f"DHCP configured for VLAN {vlan_id} (dnsmasq PID: {pid.strip()})")
+                return True
             else:
-                logger.error(f"DHCP setup failed: {output}")
-            
-            return success
+                logger.error(f"dnsmasq not running in {ns_name}")
+                return False
+                
         except Exception as e:
             logger.error(f"DHCP setup error: {e}")
             return False

@@ -16,6 +16,24 @@ def cleanup_workers():
         subprocess.run(f"ssh -o BatchMode=yes ubuntu@{w} 'sudo pkill -9 qemu-system-x86_64 2>/dev/null'", 
                       shell=True, timeout=5, capture_output=True)
 
+def cleanup_network_node():
+    """Cleanup all DHCP namespaces and VLANs on network node"""
+    network_node = "10.0.10.3"
+    cleanup_cmd = """
+    # Kill all dnsmasq processes in namespaces
+    for ns in $(ip netns list | grep 'ns-dhcp-vlan' | awk '{print $1}'); do
+        sudo ip netns exec $ns pkill dnsmasq 2>/dev/null || true
+        sudo ip netns delete $ns 2>/dev/null || true
+    done
+    
+    # Remove all VLAN gateways and DHCP ports
+    for port in $(sudo ovs-vsctl list-ports br-int | grep -E 'gw_vlan|dhcp_v'); do
+        sudo ovs-vsctl del-port br-int $port 2>/dev/null || true
+    done
+    """
+    subprocess.run(f"ssh -o BatchMode=yes ubuntu@{network_node} '{cleanup_cmd}'", 
+                  shell=True, timeout=10, capture_output=True)
+
 def cleanup_local():
     subprocess.run("rm -f database.yaml.backup *.qcow2 *.iso 2>/dev/null", shell=True)
 
@@ -26,6 +44,7 @@ def signal_handler(sig, frame):
             current_slice["orchestrator"].delete_slice(current_slice["user"], current_slice["id"])
         except: pass
     cleanup_workers()
+    cleanup_network_node()
     try: shutil.copy(db_backup, db_path)
     except: pass
     cleanup_local()
