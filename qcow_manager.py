@@ -43,7 +43,7 @@ class QCOWManager:
         """Get QCOW2 image info (virtual size, actual size)"""
         try:
             cmd = f"qemu-img info {image_path}"
-            success, output = self.executor.execute(worker_ip, "", args=[cmd])
+            success, output = self.executor.execute_direct(worker_ip, cmd)
             return success, output if success else None
         except Exception as e:
             logger.error(f"Image info error: {e}")
@@ -53,7 +53,7 @@ class QCOWManager:
         """Delete QCOW2 image"""
         try:
             cmd = f"rm -f {image_path}"
-            success, _ = self.executor.execute(worker_ip, "", args=[cmd])
+            success, _ = self.executor.execute_direct(worker_ip, cmd)
             return success
         except Exception as e:
             logger.error(f"Image deletion error: {e}")

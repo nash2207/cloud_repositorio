@@ -1,6 +1,7 @@
 import logging
 from models import Slice, Link, Flavor
 from vm_launcher import VMLauncher
+from vlan_manager import VLANManager
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +10,7 @@ class OrchestratorAPI:
         self.db = db
         self.deployment_api = deployment_api
         self.vm_launcher = VMLauncher(deployment_api.executor)
+        self.vlan_manager = VLANManager(deployment_api.executor)
         self.round_robin_idx = 0
         self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
     
@@ -130,7 +132,7 @@ class OrchestratorAPI:
             return False, str(e)
     
     def deploy_slice(self, username, slice_id):
-        """Deploy slice: configure VLANs on workers and start VMs"""
+        """Deploy slice: configure VLANs on network node and start VMs"""
         slice_data = self.db.get_slice(str(slice_id))
         
         if not slice_data or slice_data.get("owner") != username:
@@ -140,7 +142,31 @@ class OrchestratorAPI:
             return False, "Slice already running"
         
         try:
-            # Launch all VMs
+            # 1. Configure VLAN 400 for internet access (if any VM has internet)
+            has_internet = any(
+                any(iface.get("vlan_id") == 400 for iface in vm.get("interfaces", []))
+                for vm in slice_data.get("vms", [])
+            )
+            
+            if has_internet:
+                logger.info("Configuring VLAN 400 for internet access")
+                self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True)
+                self.vlan_manager.enable_internet_for_vlan(400, "10.60.7.0/24")
+            
+            # 2. Configure VLANs for each Link (L2 connections between VMs)
+            for link in slice_data.get("links", []):
+                vlan_id = link.get("vlan_id")
+                cidr = f"192.168.{vlan_id % 256}.0/24"
+                gateway_ip = f"192.168.{vlan_id % 256}.1"
+                
+                logger.info(f"Configuring VLAN {vlan_id} for Link {link.get('link_id')}")
+                success = self.vlan_manager.create_vlan_with_gateway(vlan_id, cidr, gateway_ip, dhcp_enabled=True)
+                
+                if not success:
+                    logger.error(f"Failed to configure VLAN {vlan_id}")
+                    return False, f"Failed to configure VLAN {vlan_id}"
+            
+            # 3. Launch all VMs
             for vm_dict in slice_data.get("vms", []):
                 worker_ip = vm_dict.get("worker_ip")
                 logger.info(f"Deploying VM {vm_dict['vm_id']} on {worker_ip}")
@@ -177,6 +203,11 @@ class OrchestratorAPI:
                 for vm_dict in slice_data.get("vms", []):
                     worker_ip = vm_dict.get("worker_ip")
                     self.vm_launcher.stop_vm(worker_ip, vm_dict)
+                
+                # Cleanup VLANs on network node
+                for link in slice_data.get("links", []):
+                    vlan_id = link.get("vlan_id")
+                    self.vlan_manager.delete_vlan(vlan_id)
             
             # Delete QCOW images
             for vm_dict in slice_data.get("vms", []):
