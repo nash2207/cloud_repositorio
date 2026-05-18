@@ -1,5 +1,6 @@
 import logging
 from models import Slice, Link, Flavor
+from vm_launcher import VMLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -7,6 +8,7 @@ class OrchestratorAPI:
     def __init__(self, db, deployment_api):
         self.db = db
         self.deployment_api = deployment_api
+        self.vm_launcher = VMLauncher(deployment_api.executor)
         self.round_robin_idx = 0
         self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
     
@@ -134,14 +136,28 @@ class OrchestratorAPI:
         if not slice_data or slice_data.get("owner") != username:
             return False, "Slice not found or not authorized"
         
+        if slice_data.get("status") == "running":
+            return False, "Slice already running"
+        
         try:
-            # TODO: Configure VLANs on workers using vlan_manager
-            # TODO: Start QEMU processes with proper TAP interfaces
+            # Launch all VMs
+            for vm_dict in slice_data.get("vms", []):
+                worker_ip = vm_dict.get("worker_ip")
+                logger.info(f"Deploying VM {vm_dict['vm_id']} on {worker_ip}")
+                
+                success, pid = self.vm_launcher.launch_vm(worker_ip, vm_dict)
+                if success:
+                    vm_dict["status"] = "running"
+                    vm_dict["pid"] = pid
+                    logger.info(f"VM {vm_dict['vm_id']} started with PID {pid}")
+                else:
+                    logger.error(f"Failed to start VM {vm_dict['vm_id']}")
+                    return False, f"Failed to start VM {vm_dict['vm_id']}"
             
             slice_data["status"] = "running"
             self.db.update_slice(slice_id, slice_data)
             
-            logger.info(f"Slice {slice_id} deployed")
+            logger.info(f"Slice {slice_id} deployed successfully")
             return True, "Slice deployed successfully"
         except Exception as e:
             logger.error(f"Deploy error: {e}")
@@ -156,6 +172,13 @@ class OrchestratorAPI:
             user = self.db.get_user(username)
             vm_count = len(slice_data.get("vms", []))
             
+            # Stop VMs if running
+            if slice_data.get("status") == "running":
+                for vm_dict in slice_data.get("vms", []):
+                    worker_ip = vm_dict.get("worker_ip")
+                    self.vm_launcher.stop_vm(worker_ip, vm_dict)
+            
+            # Delete QCOW images
             for vm_dict in slice_data.get("vms", []):
                 self.deployment_api.delete_vm_dict(vm_dict)
             
