@@ -166,8 +166,16 @@ class CLI:
         vm2_id = input("Second VM ID: ").strip()
         vm2_interface = input("Second VM interface (e.g., eth1): ").strip()
         
+        # Validate input
+        try:
+            vm1_id_int = int(vm1_id)
+            vm2_id_int = int(vm2_id)
+        except ValueError:
+            print("\n❌ Error: VM IDs must be numbers (e.g., 1025, not 'vm1')")
+            return
+        
         success, result = orchestrator.create_link(
-            self.current_user, slice_id, int(vm1_id), vm1_interface, int(vm2_id), vm2_interface
+            self.current_user, slice_id, vm1_id_int, vm1_interface, vm2_id_int, vm2_interface
         )
         if success:
             print(f"\n✅ Link created! VLAN: {result['vlan_id']}")
