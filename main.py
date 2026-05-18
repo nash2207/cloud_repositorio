@@ -45,8 +45,6 @@ def signal_handler(sig, frame):
         except: pass
     cleanup_workers()
     cleanup_network_node()
-    try: shutil.copy(db_backup, db_path)
-    except: pass
     cleanup_local()
     print("✅ Done\n")
     sys.exit(0)
