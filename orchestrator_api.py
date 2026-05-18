@@ -149,9 +149,10 @@ class OrchestratorAPI:
             )
             
             if has_internet:
-                logger.info("Configuring VLAN 400 for internet access")
-                self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True)
-                self.vlan_manager.enable_internet_for_vlan(400, "10.60.7.0/24")
+                logger.info("Configuring VLAN 400 for internet access (gateway already exists)")
+                # VLAN 400: Gateway 10.60.7.1 already configured by professors
+                # Only setup DHCP server, don't create gateway
+                self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True, create_gateway=False)
             
             # 2. Configure VLANs for each Link (L2 connections between VMs)
             for link in slice_data.get("links", []):

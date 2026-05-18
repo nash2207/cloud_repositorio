@@ -7,24 +7,25 @@ class VLANManager:
         self.executor = remote_executor
         self.network_node_ip = network_node_ip
     
-    def create_vlan_with_gateway(self, vlan_id, cidr, gateway_ip, dhcp_enabled=True):
+    def create_vlan_with_gateway(self, vlan_id, cidr, gateway_ip, dhcp_enabled=True, create_gateway=True):
         """Create VLAN with gateway on network node and optional DHCP"""
         try:
-            mask = cidr.split('/')[1]
-            cmd = f"""
-            sudo ovs-vsctl --may-exist add-port br-int gw_vlan{vlan_id} tag={vlan_id} -- set interface gw_vlan{vlan_id} type=internal
-            sudo ip addr add {gateway_ip}/{mask} dev gw_vlan{vlan_id} 2>/dev/null || true
-            sudo ip link set dev gw_vlan{vlan_id} up
-            """
-            success, output = self.executor.execute_direct(self.network_node_ip, cmd)
-            
-            if not success:
-                logger.error(f"Gateway creation failed: {output}")
-                return False
+            if create_gateway:
+                mask = cidr.split('/')[1]
+                cmd = f"""
+                sudo ovs-vsctl --may-exist add-port br-int gw_vlan{vlan_id} tag={vlan_id} -- set interface gw_vlan{vlan_id} type=internal
+                sudo ip addr add {gateway_ip}/{mask} dev gw_vlan{vlan_id} 2>/dev/null || true
+                sudo ip link set dev gw_vlan{vlan_id} up
+                """
+                success, output = self.executor.execute_direct(self.network_node_ip, cmd)
+                
+                if not success:
+                    logger.error(f"Gateway creation failed: {output}")
+                    return False
             
             if dhcp_enabled:
                 return self._setup_dhcp(vlan_id, cidr, gateway_ip)
-            return success
+            return True
         except Exception as e:
             logger.error(f"VLAN creation error: {e}")
             return False
@@ -36,7 +37,9 @@ class VLANManager:
             dhcp_port = f"dhcp_v{vlan_id}"
             base_ip = '.'.join(cidr.split('.')[0:3])
             mask = cidr.split('/')[1]
-            dhcp_ip = f"{base_ip}.2"
+            
+            # Use .254 for DHCP server IP to avoid conflicts
+            dhcp_ip = f"{base_ip}.254"
             dhcp_range = f"{base_ip}.10,{base_ip}.250"
             
             # Step by step to catch errors
