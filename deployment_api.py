@@ -20,40 +20,39 @@ class DeploymentAPI:
             macs.append(mac)
         return macs
     
-    def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, vlan_ids, base_image_path=None, internet_enabled=False):
+    def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, flavor, data_interfaces_count, internet_enabled=False):
         try:
-            vlan_ids = vlan_ids or []
             self.vnc_port_counter += 1
             vnc_port = self.vnc_port_counter
             
-            interface_count = len(vlan_ids) + 1
-            if internet_enabled:
-                interface_count += 1
+            flavor_spec = flavor
+            interface_count = data_interfaces_count + 1  # +1 for eth0
             
             macs = self.generate_unique_macs(vm_id, count=interface_count)
             mgmt_ip = f"10.60.7.{100 + vm_id % 100}"
             
             interfaces = []
-            mac_idx = 0
             
+            # eth0 always for management (VLAN 400 if internet enabled)
             if internet_enabled:
-                interfaces.append(Interface("eth0", vlan_id=400, mac=macs[mac_idx], 
+                interfaces.append(Interface("eth0", vlan_id=400, mac=macs[0], 
                                           ip_config={"ip": mgmt_ip, "cidr": "10.60.7.0/24", "gateway": "10.60.7.1"}))
-                mac_idx += 1
+            else:
+                interfaces.append(Interface("eth0", vlan_id=None, mac=macs[0], ip_config=None))
             
-            for idx, vlan_id in enumerate(vlan_ids):
-                interfaces.append(Interface(f"eth{mac_idx}", vlan_id=vlan_id, mac=macs[mac_idx]))
-                mac_idx += 1
+            # Data interfaces (eth1, eth2, ...) - unconnected initially
+            for i in range(1, data_interfaces_count + 1):
+                interfaces.append(Interface(f"eth{i}", vlan_id=None, mac=macs[i], link_id=None))
             
-            image_path = base_image_path or self.base_image_path
-            success, qcow_img = self.qcow_mgr.create_backing_image(worker_ip, vm_name, image_path, vlan_ids) if image_path else (True, None)
+            image_path = flavor_spec.get("image")
+            success, qcow_img = self.qcow_mgr.create_backing_image(worker_ip, vm_name, image_path, []) if image_path else (True, None)
             
             if not success:
                 return False, None
             
-            vm = VM(vm_id, vm_name, owner, worker_ip, vnc_port, interfaces, qcow_image=qcow_img)
-            vm.status = "running"
-            logger.info(f"VM {vm_name} created (VNC: {vnc_port}, QCOW: {qcow_img}, Internet: {internet_enabled})")
+            vm = VM(vm_id, vm_name, owner, worker_ip, vnc_port, interfaces, flavor=flavor_spec, qcow_image=qcow_img)
+            vm.status = "design"
+            logger.info(f"VM {vm_name} created (VNC: {vnc_port}, Flavor: {flavor_spec}, Internet: {internet_enabled}, Data IFs: {data_interfaces_count})")
             return True, vm
         except Exception as e:
             logger.error(f"VM creation error: {e}")

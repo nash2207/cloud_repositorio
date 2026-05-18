@@ -46,9 +46,11 @@ class CLI:
             print("1. View quota and resources")
             print("2. Create Slice")
             print("3. Add VM to Slice")
-            print("4. View my Slices")
-            print("5. Delete Slice")
-            print("6. Logout")
+            print("4. Create Link between VMs")
+            print("5. View my Slices")
+            print("6. Deploy Slice")
+            print("7. Delete Slice")
+            print("8. Logout")
             choice = input("\nChoice: ").strip()
             if choice == "1":
                 self.view_quota()
@@ -57,10 +59,14 @@ class CLI:
             elif choice == "3":
                 self.add_vm_menu()
             elif choice == "4":
-                self.view_slices()
+                self.create_link_menu()
             elif choice == "5":
-                self.delete_slice_menu()
+                self.view_slices()
             elif choice == "6":
+                self.deploy_slice_menu()
+            elif choice == "7":
+                self.delete_slice_menu()
+            elif choice == "8":
                 self.current_user = None
                 break
     
@@ -85,26 +91,25 @@ class CLI:
         slice_id = input("\nSlice ID: ").strip()
         vm_name = input("VM name: ").strip()
         
-        print("\nAvailable images:")
-        print("1. cirros-0.6.2-x86_64-disk.img (Lightweight)")
-        print("2. focal-server-cloudimg-amd64.img (Ubuntu 20.04)")
-        image_choice = input("Choose image (1-2): ").strip()
+        print("\nAvailable flavors:")
+        print("1. cirros (1 core, 0.5GB RAM, 1GB disk)")
+        print("2. ubuntu (1 core, 0.5GB RAM, 2.2GB disk)")
+        flavor_choice = input("Choose flavor (1-2): ").strip()
         
-        images = {
-            "1": "/tmp/vm_images/cirros-0.6.2-x86_64-disk.img",
-            "2": "/tmp/vm_images/focal-server-cloudimg-amd64.img"
-        }
-        base_image = images.get(image_choice, images["1"])
+        flavors = {"1": "cirros", "2": "ubuntu"}
+        flavor_name = flavors.get(flavor_choice, "cirros")
         
-        internet = input("Enable internet access? (y/n): ").strip().lower() == 'y'
+        data_interfaces = input("Number of data interfaces (eth1, eth2, ...): ").strip()
+        data_interfaces = int(data_interfaces) if data_interfaces.isdigit() else 1
+        
+        internet = input("Enable internet access (eth0 in VLAN 400)? (y/n): ").strip().lower() == 'y'
         
         success, result = orchestrator.add_vm_to_slice(
-            self.current_user, slice_id, vm_name, 
-            base_image_path=base_image, 
-            internet_enabled=internet
+            self.current_user, slice_id, vm_name, flavor_name,
+            data_interfaces, internet
         )
         if success:
-            print(f"\n✅ VM added! ID: {result['vm_id']}, VNC: {result['vnc_port']}")
+            print(f"\n✅ VM added! ID: {result['vm_id']}, VNC: {result['vnc_port']}, Flavor: {flavor_name}")
         else:
             print(f"\n❌ Error: {result}")
     
@@ -114,19 +119,64 @@ class CLI:
         if not slice_ids:
             print("\nNo Slices found.")
             return
-        print("\n" + "="*50)
+        print("\n" + "="*70)
         for slice_id in slice_ids:
             slice_data = db.get_slice(slice_id)
             if slice_data:
                 vm_count = len(slice_data.get("vms", []))
-                vlan_ids = slice_data.get("vlan_ids", [])
-                print(f"Slice {slice_id}: {vm_count} VMs, VLANs: {vlan_ids}")
+                link_count = len(slice_data.get("links", []))
+                status = slice_data.get("status", "design")
+                vlan_pool = f"{slice_data.get('vlan_pool_start')}-{slice_data.get('vlan_pool_end')}"
+                print(f"Slice {slice_id} [{status}]: {vm_count} VMs, {link_count} Links, VLAN pool: {vlan_pool}")
                 for vm in slice_data.get("vms", []):
-                    print(f"  └─ VM {vm['vm_id']}: {vm['name']} (VNC: {vm['vnc_port']}, Worker: {vm['worker_ip']})")
+                    flavor = vm.get('flavor', {}).get('disk_gb', 'N/A')
+                    print(f"  └─ VM {vm['vm_id']}: {vm['name']} (VNC: {vm['vnc_port']}, Worker: {vm['worker_ip']}, Disk: {flavor}GB)")
+                    for iface in vm.get("interfaces", []):
+                        link_info = f", Link: {iface['link_id']}" if iface.get('link_id') else ", unconnected"
+                        vlan_info = f", VLAN: {iface['vlan_id']}" if iface.get('vlan_id') else ""
+                        print(f"      {iface['name']}: MAC {iface['mac']}{vlan_info}{link_info}")
+                for link in slice_data.get("links", []):
+                    print(f"  Link {link['link_id']}: VM{link['vm1_id']}.{link['vm1_interface']} <-> VM{link['vm2_id']}.{link['vm2_interface']} (VLAN {link['vlan_id']})")
+        print("="*70)
     
     def delete_slice_menu(self):
         slice_id = input("\nSlice ID: ").strip()
         success, msg = orchestrator.delete_slice(self.current_user, slice_id)
+        print(f"\n{msg}")
+    
+    def create_link_menu(self):
+        slice_id = input("\nSlice ID: ").strip()
+        
+        # Show available VMs and their interfaces
+        slice_data = db.get_slice(slice_id)
+        if not slice_data:
+            print("\n❌ Slice not found")
+            return
+        
+        print("\nAvailable VMs and interfaces:")
+        for vm in slice_data.get("vms", []):
+            print(f"  VM {vm['vm_id']}: {vm['name']}")
+            for iface in vm.get("interfaces", []):
+                if iface["name"] != "eth0":  # Skip management interface
+                    link_status = f"(connected to Link {iface['link_id']})" if iface.get('link_id') else "(unconnected)"
+                    print(f"    - {iface['name']} {link_status}")
+        
+        vm1_id = input("\nFirst VM ID: ").strip()
+        vm1_interface = input("First VM interface (e.g., eth1): ").strip()
+        vm2_id = input("Second VM ID: ").strip()
+        vm2_interface = input("Second VM interface (e.g., eth1): ").strip()
+        
+        success, result = orchestrator.create_link(
+            self.current_user, slice_id, int(vm1_id), vm1_interface, int(vm2_id), vm2_interface
+        )
+        if success:
+            print(f"\n✅ Link created! VLAN: {result['vlan_id']}")
+        else:
+            print(f"\n❌ Error: {result}")
+    
+    def deploy_slice_menu(self):
+        slice_id = input("\nSlice ID to deploy: ").strip()
+        success, msg = orchestrator.deploy_slice(self.current_user, slice_id)
         print(f"\n{msg}")
     
     def run(self):
