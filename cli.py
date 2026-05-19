@@ -50,7 +50,8 @@ class CLI:
             print("5. View my Slices")
             print("6. Deploy Slice")
             print("7. Delete Slice")
-            print("8. Logout")
+            print("8. Cleanup orphaned VMs")
+            print("9. Logout")
             choice = input("\nChoice: ").strip()
             if choice == "1":
                 self.view_quota()
@@ -67,6 +68,8 @@ class CLI:
             elif choice == "7":
                 self.delete_slice_menu()
             elif choice == "8":
+                self.cleanup_orphaned_vms()
+            elif choice == "9":
                 self.current_user = None
                 break
     
@@ -186,6 +189,18 @@ class CLI:
         slice_id = input("\nSlice ID to deploy: ").strip()
         success, msg = orchestrator.deploy_slice(self.current_user, slice_id)
         print(f"\n{msg}")
+    
+    def cleanup_orphaned_vms(self):
+        print("\n⚠️  This will kill all VMs not registered in the database.")
+        confirm = input("Are you sure? (yes/no): ").strip().lower()
+        if confirm == "yes":
+            from sync_manager import SyncManager
+            from remote_executor import RemoteExecutor
+            sync = SyncManager(db, RemoteExecutor())
+            sync.cleanup_orphaned_vms()
+            print("\n✅ Cleanup completed")
+        else:
+            print("\n❌ Cleanup cancelled")
     
     def run(self):
         monitor.start()

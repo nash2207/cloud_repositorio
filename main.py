@@ -2,6 +2,7 @@ import signal, sys, shutil, subprocess
 from database import Database
 from remote_executor import RemoteExecutor
 from worker_discovery import WorkerDiscovery
+from sync_manager import SyncManager
 from cli import CLI
 
 db = Database()
@@ -56,8 +57,14 @@ if __name__ == "__main__":
     except: pass
     
     executor = RemoteExecutor()
+    
+    # Discover worker specs
     discovery = WorkerDiscovery(executor, workers)
     discovery.discover_all(db)
+    
+    # Sync worker state with database
+    sync_manager = SyncManager(db, executor)
+    sync_manager.sync_all_workers()
     
     cli = CLI()
     cli.current_slice = current_slice
