@@ -1,0 +1,239 @@
+"""FastAPI Web Interface for Slice Manager"""
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+import hashlib
+import uvicorn
+
+from database import Database
+from remote_executor import RemoteExecutor
+from deployment_api import DeploymentAPI
+from orchestrator_api import OrchestratorAPI
+from sync_manager import SyncManager
+
+# Initialize FastAPI
+app = FastAPI(title="Slice Manager API")
+templates = Jinja2Templates(directory="templates")
+
+# Initialize backend components
+db = Database()
+executor = RemoteExecutor()
+deployment = DeploymentAPI(executor)
+orchestrator = OrchestratorAPI(db, deployment)
+sync_manager = SyncManager(db, executor)
+
+# Simple session storage (in production use Redis/JWT)
+sessions = {}
+
+# ============= Authentication =============
+def hash_password(pwd):
+    return hashlib.sha256(pwd.encode()).hexdigest()
+
+def verify_session(request: Request):
+    session_id = request.cookies.get("session_id")
+    if not session_id or session_id not in sessions:
+        return None
+    return sessions[session_id]
+
+# ============= Models =============
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class CreateSliceRequest(BaseModel):
+    name: str
+
+class AddVMRequest(BaseModel):
+    slice_id: int
+    vm_name: str
+    flavor: str
+    data_interfaces: int
+    internet_enabled: bool
+
+class CreateLinkRequest(BaseModel):
+    slice_id: int
+    vm1_id: int
+    vm1_interface: str
+    vm2_id: int
+    vm2_interface: str
+
+# ============= HTML Routes =============
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return RedirectResponse(url="/login")
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    user = verify_session(request)
+    if not user:
+        return RedirectResponse(url="/login")
+    return templates.TemplateResponse("dashboard.html", {"request": request, "username": user})
+
+# ============= API Routes =============
+@app.post("/api/login")
+async def api_login(login: LoginRequest, response: Response):
+    user = db.get_user(login.username)
+    if user and user.get("password_hash") == hash_password(login.password):
+        session_id = hashlib.sha256(f"{login.username}{hash(login.password)}".encode()).hexdigest()
+        sessions[session_id] = login.username
+        response.set_cookie(key="session_id", value=session_id, httponly=True)
+        return {"success": True, "username": login.username}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@app.post("/api/logout")
+async def api_logout(request: Request, response: Response):
+    session_id = request.cookies.get("session_id")
+    if session_id in sessions:
+        del sessions[session_id]
+    response.delete_cookie("session_id")
+    return {"success": True}
+
+@app.get("/api/quotas")
+async def api_quotas(request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    return {
+        "used_vms": user_data.get("used_vms", 0),
+        "quota_vms": user_data.get("quota_vms", 10),
+        "slices": len(user_data.get("slices", [])),
+        "vlan_pool": "200-219"
+    }
+
+@app.get("/api/slices")
+async def api_get_slices(request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    slice_ids = user_data.get("slices", [])
+    slices = []
+    
+    for slice_id in slice_ids:
+        slice_data = db.get_slice(slice_id)
+        if slice_data:
+            slices.append({
+                "slice_id": slice_data.get("slice_id"),
+                "status": slice_data.get("status", "design"),
+                "vms": slice_data.get("vms", []),
+                "links": slice_data.get("links", []),
+                "vlan_pool_start": slice_data.get("vlan_pool_start"),
+                "vlan_pool_end": slice_data.get("vlan_pool_end")
+            })
+    
+    return {"slices": slices}
+
+@app.get("/api/slices/{slice_id}")
+async def api_get_slice(slice_id: int, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    slice_data = db.get_slice(str(slice_id))
+    if not slice_data or slice_data.get("owner") != user:
+        raise HTTPException(status_code=404, detail="Slice not found")
+    
+    return slice_data
+
+@app.post("/api/slices")
+async def api_create_slice(slice_req: CreateSliceRequest, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.create_slice(user, slice_req.name)
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
+@app.post("/api/slices/{slice_id}/vms")
+async def api_add_vm(slice_id: int, vm_req: AddVMRequest, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.add_vm_to_slice(
+        user, slice_id, vm_req.vm_name, vm_req.flavor,
+        vm_req.data_interfaces, vm_req.internet_enabled
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
+@app.post("/api/slices/{slice_id}/links")
+async def api_create_link(slice_id: int, link_req: CreateLinkRequest, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.create_link(
+        user, slice_id, link_req.vm1_id, link_req.vm1_interface,
+        link_req.vm2_id, link_req.vm2_interface
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
+@app.post("/api/slices/{slice_id}/deploy")
+async def api_deploy_slice(slice_id: int, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    slice_data = db.get_slice(str(slice_id))
+    if not slice_data:
+        raise HTTPException(status_code=404, detail="Slice not found")
+    
+    if slice_data.get("owner") != user:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Set status to provisioning
+    slice_data["status"] = "provisioning"
+    db.update_slice(slice_id, slice_data)
+    
+    # Deploy synchronously (in production use background tasks)
+    success, msg = orchestrator.deploy_slice(user, slice_id)
+    
+    if not success:
+        # Revert to design on failure
+        slice_data["status"] = "design"
+        db.update_slice(slice_id, slice_data)
+        raise HTTPException(status_code=400, detail=msg)
+    
+    return {"success": True, "message": msg}
+
+@app.delete("/api/slices/{slice_id}")
+async def api_delete_slice(slice_id: int, request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, msg = orchestrator.delete_slice(user, slice_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    
+    return {"success": True, "message": msg}
+
+@app.post("/api/cleanup-orphaned")
+async def api_cleanup_orphaned(request: Request):
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    sync_manager.cleanup_orphaned_vms()
+    return {"success": True, "message": "Orphaned VMs cleaned up"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)

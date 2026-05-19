@@ -138,8 +138,8 @@ class OrchestratorAPI:
         if not slice_data or slice_data.get("owner") != username:
             return False, "Slice not found or not authorized"
         
-        if slice_data.get("status") == "running":
-            return False, "Slice already running"
+        if slice_data.get("status") == "deployed":
+            return False, "Slice already deployed"
         
         try:
             # 1. Configure VLAN 400 DHCP for internet access (gateway already exists)
@@ -178,14 +178,14 @@ class OrchestratorAPI:
                 
                 success, pid = self.vm_launcher.launch_vm(worker_ip, vm_dict)
                 if success:
-                    vm_dict["status"] = "running"
+                    vm_dict["status"] = "deployed"
                     vm_dict["pid"] = pid
                     logger.info(f"VM {vm_dict['vm_id']} started with PID {pid}")
                 else:
                     logger.error(f"Failed to start VM {vm_dict['vm_id']}")
                     return False, f"Failed to start VM {vm_dict['vm_id']}"
             
-            slice_data["status"] = "running"
+            slice_data["status"] = "deployed"
             self.db.update_slice(slice_id, slice_data)
             
             logger.info(f"Slice {slice_id} deployed successfully")
@@ -203,8 +203,8 @@ class OrchestratorAPI:
             user = self.db.get_user(username)
             vm_count = len(slice_data.get("vms", []))
             
-            # Stop VMs if running
-            if slice_data.get("status") == "running":
+            # Stop VMs if deployed
+            if slice_data.get("status") == "deployed":
                 for vm_dict in slice_data.get("vms", []):
                     worker_ip = vm_dict.get("worker_ip")
                     self.vm_launcher.stop_vm(worker_ip, vm_dict)
