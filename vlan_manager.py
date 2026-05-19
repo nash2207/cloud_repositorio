@@ -84,7 +84,7 @@ class VLANManager:
             cmd5 = f"sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true"
             self.executor.execute_direct(self.network_node_ip, cmd5)
             
-            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-dhcp --log-facility=/tmp/dnsmasq_vlan{vlan_id}.log"
+            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
             
             if not success:
