@@ -1,12 +1,17 @@
 """Sync Manager - Synchronize worker state with database"""
-import logging, re
+import logging
+from providers.baremetal_provider import BareMetalComputeProvider
 
 logger = logging.getLogger(__name__)
 
+
 class SyncManager:
-    def __init__(self, db, remote_executor):
+    """Sync manager with pluggable compute provider"""
+    
+    def __init__(self, db, remote_executor, compute_provider=None):
         self.db = db
         self.executor = remote_executor
+        self.compute_provider = compute_provider or BareMetalComputeProvider(remote_executor)
         self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
     
     def sync_all_workers(self):
@@ -21,16 +26,12 @@ class SyncManager:
     def sync_worker(self, worker_ip):
         """Sync single worker: detect running VMs and update DB"""
         try:
-            # Get running QEMU processes
-            cmd = "ps aux | grep 'qemu-system-x86_64.*daemonize' | grep -v grep"
-            success, output = self.executor.execute_direct(worker_ip, cmd)
+            running_vms = self.compute_provider.get_running_vms(worker_ip)
             
-            if not success or not output.strip():
+            if not running_vms:
                 logger.info(f"No VMs running on {worker_ip}")
                 return
             
-            # Parse QEMU processes
-            running_vms = self._parse_qemu_processes(output)
             logger.info(f"Found {len(running_vms)} VMs on {worker_ip}: {[vm['name'] for vm in running_vms]}")
             
             # Check each VM against database
@@ -39,36 +40,6 @@ class SyncManager:
                 
         except Exception as e:
             logger.error(f"Sync error for {worker_ip}: {e}")
-    
-    def _parse_qemu_processes(self, ps_output):
-        """Parse ps output to extract VM information"""
-        vms = []
-        for line in ps_output.strip().split('\n'):
-            try:
-                # Extract PID
-                parts = line.split()
-                pid = parts[1]
-                
-                # Extract VM name from qcow2 file
-                match = re.search(r'file=([^,\s]+\.qcow2)', line)
-                if match:
-                    qcow_path = match.group(1)
-                    vm_name = qcow_path.split('/')[-1].replace('_img.qcow2', '')
-                    
-                    # Extract VNC port
-                    vnc_match = re.search(r'-vnc [^:]+:(\d+)', line)
-                    vnc_port = 5900 + int(vnc_match.group(1)) if vnc_match else None
-                    
-                    vms.append({
-                        'name': vm_name,
-                        'pid': pid,
-                        'qcow_path': qcow_path,
-                        'vnc_port': vnc_port
-                    })
-            except Exception as e:
-                logger.error(f"Failed to parse line: {line[:50]}... Error: {e}")
-        
-        return vms
     
     def _sync_vm(self, worker_ip, vm_info):
         """Sync single VM: check if it's in DB, if not it's orphaned"""
@@ -82,7 +53,7 @@ class SyncManager:
                 if vm.get("name") == vm_name and vm.get("worker_ip") == worker_ip:
                     # VM found in DB, update PID and status
                     vm["pid"] = pid
-                    vm["status"] = "running"
+                    vm["status"] = "deployed"
                     self.db.update_slice(slice_id, slice_data)
                     logger.info(f"Synced VM {vm_name} (PID: {pid}) in slice {slice_id}")
                     found = True
@@ -92,21 +63,13 @@ class SyncManager:
         
         if not found:
             logger.warning(f"Orphaned VM detected: {vm_name} (PID: {pid}) on {worker_ip}")
-            # Optionally: kill orphaned VMs or register them
-            # For now, just log them
     
     def cleanup_orphaned_vms(self):
         """Kill all VMs not registered in database"""
         logger.info("Cleaning up orphaned VMs...")
         
         for worker_ip in self.workers:
-            cmd = "ps aux | grep 'qemu-system-x86_64.*daemonize' | grep -v grep"
-            success, output = self.executor.execute_direct(worker_ip, cmd)
-            
-            if not success or not output.strip():
-                continue
-            
-            running_vms = self._parse_qemu_processes(output)
+            running_vms = self.compute_provider.get_running_vms(worker_ip)
             
             for vm_info in running_vms:
                 vm_name = vm_info['name']

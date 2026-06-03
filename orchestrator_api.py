@@ -1,20 +1,31 @@
+"""Orchestrator API - High-level slice management with pluggable providers"""
 import logging
 from models import Slice, Link, Flavor
-from vm_launcher import VMLauncher
-from vlan_manager import VLANManager
+from providers.baremetal_provider import BareMetalComputeProvider
+from providers.ovs_network_provider import OVSNetworkProvider
 
 logger = logging.getLogger(__name__)
 
+
 class OrchestratorAPI:
-    def __init__(self, db, deployment_api):
+    """
+    Orchestrator with pluggable compute and network providers
+    Can be extended to support OpenStack or other backends
+    """
+    
+    def __init__(self, db, deployment_api, compute_provider=None, network_provider=None):
         self.db = db
         self.deployment_api = deployment_api
-        self.vm_launcher = VMLauncher(deployment_api.executor)
-        self.vlan_manager = VLANManager(deployment_api.executor)
+        
+        # Use provided providers or default to bare-metal
+        self.compute_provider = compute_provider or BareMetalComputeProvider(deployment_api.executor)
+        self.network_provider = network_provider or OVSNetworkProvider(deployment_api.executor)
+        
         self.round_robin_idx = 0
         self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
     
     def get_next_worker(self):
+        """Round-robin worker selection"""
         worker = self.workers[self.round_robin_idx % len(self.workers)]
         self.round_robin_idx += 1
         return worker
@@ -43,6 +54,7 @@ class OrchestratorAPI:
             return False, str(e)
     
     def add_vm_to_slice(self, username, slice_id, vm_name, flavor_name, data_interfaces_count, internet_enabled=False):
+        """Add VM to slice with flavor-aware interface naming"""
         user = self.db.get_user(username)
         slice_data = self.db.get_slice(str(slice_id))
         
@@ -58,13 +70,10 @@ class OrchestratorAPI:
         try:
             vm_id = self.db.get_next_vm_id()
             worker_ip = self.get_next_worker()
-            flavor_spec = Flavor.get(flavor_name)
             
-            if not flavor_spec:
-                return False, "Invalid flavor"
-            
+            # Create VM with flavor-aware interfaces
             success, vm = self.deployment_api.create_vm_with_qcow(
-                slice_id, vm_id, vm_name, username, worker_ip, flavor_spec,
+                slice_id, vm_id, vm_name, username, worker_ip, flavor_name,
                 data_interfaces_count, internet_enabled
             )
             if not success:
@@ -78,7 +87,7 @@ class OrchestratorAPI:
             user["used_vms"] = user.get("used_vms", 0) + 1
             self.db.update_user(username, user)
             
-            logger.info(f"VM {vm_id} added to slice {slice_id}")
+            logger.info(f"VM {vm_id} ({flavor_name}) added to slice {slice_id}")
             return True, vm.to_dict()
         except Exception as e:
             logger.error(f"VM creation error: {e}")
@@ -132,7 +141,7 @@ class OrchestratorAPI:
             return False, str(e)
     
     def deploy_slice(self, username, slice_id):
-        """Deploy slice: configure VLANs on network node and start VMs"""
+        """Deploy slice using pluggable providers"""
         slice_data = self.db.get_slice(str(slice_id))
         
         if not slice_data or slice_data.get("owner") != username:
@@ -150,10 +159,11 @@ class OrchestratorAPI:
             
             if has_internet:
                 logger.info("Configuring DHCP for VLAN 400 (gateway 10.60.7.1 already exists)")
-                # Clean up any previous VLAN 400 DHCP config first
-                self.vlan_manager.delete_vlan(400)
-                # VLAN 400: Gateway already configured by professors, only setup DHCP
-                success = self.vlan_manager.create_vlan_with_gateway(400, "10.60.7.0/24", "10.60.7.1", dhcp_enabled=True, create_gateway=False)
+                self.network_provider.delete_network(400)  # Cleanup previous
+                success = self.network_provider.create_network(
+                    400, "10.60.7.0/24", "10.60.7.1", 
+                    dhcp_enabled=True, create_gateway=False
+                )
                 if not success:
                     logger.error("Failed to configure DHCP for VLAN 400")
                     return False, "Failed to configure DHCP for VLAN 400"
@@ -165,18 +175,20 @@ class OrchestratorAPI:
                 gateway_ip = f"192.168.{vlan_id % 256}.1"
                 
                 logger.info(f"Configuring VLAN {vlan_id} for Link {link.get('link_id')}")
-                success = self.vlan_manager.create_vlan_with_gateway(vlan_id, cidr, gateway_ip, dhcp_enabled=True)
+                success = self.network_provider.create_network(
+                    vlan_id, cidr, gateway_ip, dhcp_enabled=True
+                )
                 
                 if not success:
                     logger.error(f"Failed to configure VLAN {vlan_id}")
                     return False, f"Failed to configure VLAN {vlan_id}"
             
-            # 3. Launch all VMs
+            # 3. Launch all VMs using compute provider
             for vm_dict in slice_data.get("vms", []):
                 worker_ip = vm_dict.get("worker_ip")
                 logger.info(f"Deploying VM {vm_dict['vm_id']} on {worker_ip}")
                 
-                success, pid = self.vm_launcher.launch_vm(worker_ip, vm_dict)
+                success, pid = self.compute_provider.launch_vm(worker_ip, vm_dict)
                 if success:
                     vm_dict["status"] = "deployed"
                     vm_dict["pid"] = pid
@@ -195,6 +207,7 @@ class OrchestratorAPI:
             return False, str(e)
     
     def delete_slice(self, username, slice_id):
+        """Delete slice using pluggable providers"""
         try:
             slice_data = self.db.get_slice(str(slice_id))
             if not slice_data or slice_data.get("owner") != username:
@@ -207,12 +220,12 @@ class OrchestratorAPI:
             if slice_data.get("status") == "deployed":
                 for vm_dict in slice_data.get("vms", []):
                     worker_ip = vm_dict.get("worker_ip")
-                    self.vm_launcher.stop_vm(worker_ip, vm_dict)
+                    self.compute_provider.stop_vm(worker_ip, vm_dict)
                 
                 # Cleanup VLANs on network node
                 for link in slice_data.get("links", []):
                     vlan_id = link.get("vlan_id")
-                    self.vlan_manager.delete_vlan(vlan_id)
+                    self.network_provider.delete_network(vlan_id)
             
             # Delete QCOW images
             for vm_dict in slice_data.get("vms", []):

@@ -13,13 +13,40 @@ class User:
 
 class Flavor:
     FLAVORS = {
-        "cirros": {"cores": 1, "ram_gb": 0.5, "disk_gb": 1, "image": "/tmp/vm_images/cirros-0.6.2-x86_64-disk.img"},
-        "ubuntu": {"cores": 1, "ram_gb": 0.5, "disk_gb": 2.2, "image": "/tmp/vm_images/focal-server-cloudimg-amd64.img"}
+        "cirros": {
+            "cores": 1, 
+            "ram_gb": 0.5, 
+            "disk_gb": 1, 
+            "image": "/tmp/vm_images/cirros-0.6.2-x86_64-disk.img",
+            "interface_prefix": "eth"  # eth0, eth1, eth2...
+        },
+        "ubuntu": {
+            "cores": 1, 
+            "ram_gb": 0.5, 
+            "disk_gb": 2.2, 
+            "image": "/tmp/vm_images/focal-server-cloudimg-amd64.img",
+            "interface_prefix": "ens"  # ens3, ens4, ens5...
+        }
     }
     
     @staticmethod
     def get(flavor_name):
         return Flavor.FLAVORS.get(flavor_name)
+    
+    @staticmethod
+    def get_interface_name(flavor_name, index):
+        """Get interface name based on flavor and index"""
+        flavor = Flavor.get(flavor_name)
+        if not flavor:
+            return f"eth{index}"
+        
+        prefix = flavor.get("interface_prefix", "eth")
+        if prefix == "ens":
+            # Ubuntu: ens3, ens4, ens5...
+            return f"ens{index + 3}"
+        else:
+            # Cirros: eth0, eth1, eth2...
+            return f"eth{index}"
 
 class Interface:
     def __init__(self, name, vlan_id=None, mac=None, ip_config=None, link_id=None):

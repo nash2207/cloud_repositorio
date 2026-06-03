@@ -234,6 +234,3 @@ async def api_cleanup_orphaned(request: Request):
     
     sync_manager.cleanup_orphaned_vms()
     return {"success": True, "message": "Orphaned VMs cleaned up"}
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
