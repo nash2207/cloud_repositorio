@@ -90,6 +90,16 @@ python3 main.py --both    # Both CLI + Web simultaneously ⭐
 
 ## 📖 Usage Examples
 
+### Both CLI + Web Mode (Recommended) ⭐
+
+```bash
+python3 main.py --both
+
+# Web interface runs in background on http://0.0.0.0:8080
+# CLI runs in foreground for quick operations
+# Use whichever interface you prefer!
+```
+
 ### CLI Mode
 
 ```bash
