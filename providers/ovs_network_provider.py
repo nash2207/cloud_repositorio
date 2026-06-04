@@ -122,10 +122,10 @@ class OVSNetworkProvider(BaseNetworkProvider):
             self.executor.execute_direct(self.network_node_ip, cmd5)
             
             cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=-"
-            success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
+            success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=30)
             
             if not success:
-                logger.error(f"Failed to start dnsmasq: {output}")
+                logger.error(f"Failed to start dnsmasq for VLAN {vlan_id}: {output}")
                 return False
             
             # Verify dnsmasq is running

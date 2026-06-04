@@ -49,15 +49,24 @@ class AddVMRequest(BaseModel):
     slice_id: int
     vm_name: str
     flavor: str
-    data_interfaces: int
     internet_enabled: bool
 
 class CreateLinkRequest(BaseModel):
     slice_id: int
     vm1_id: int
-    vm1_interface: str
     vm2_id: int
-    vm2_interface: str
+
+class UpdateVMRequest(BaseModel):
+    vm_name: str = None
+    flavor: str = None
+    internet_enabled: bool = None
+
+class TopologyPresetRequest(BaseModel):
+    topology_type: str  # ring, bus, star, mesh
+    num_vms: int
+    flavor: str = "cirros"
+    internet: bool = False
+    base_name: str = "vm"
 
 # ============= HTML Routes =============
 @app.get("/", response_class=HTMLResponse)
@@ -163,8 +172,7 @@ async def api_add_vm(slice_id: int, vm_req: AddVMRequest, request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     success, result = orchestrator.add_vm_to_slice(
-        user, slice_id, vm_req.vm_name, vm_req.flavor,
-        vm_req.data_interfaces, vm_req.internet_enabled
+        user, slice_id, vm_req.vm_name, vm_req.flavor, vm_req.internet_enabled
     )
     if not success:
         raise HTTPException(status_code=400, detail=result)
@@ -178,8 +186,7 @@ async def api_create_link(slice_id: int, link_req: CreateLinkRequest, request: R
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     success, result = orchestrator.create_link(
-        user, slice_id, link_req.vm1_id, link_req.vm1_interface,
-        link_req.vm2_id, link_req.vm2_interface
+        user, slice_id, link_req.vm1_id, link_req.vm2_id
     )
     if not success:
         raise HTTPException(status_code=400, detail=result)
@@ -234,3 +241,59 @@ async def api_cleanup_orphaned(request: Request):
     
     sync_manager.cleanup_orphaned_vms()
     return {"success": True, "message": "Orphaned VMs cleaned up"}
+
+@app.patch("/api/slices/{slice_id}/vms/{vm_id}")
+async def api_update_vm(slice_id: int, vm_id: int, vm_req: UpdateVMRequest, request: Request):
+    """Update VM properties (only in design state)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.update_vm(user, slice_id, vm_id, vm_req.dict(exclude_none=True))
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
+@app.post("/api/slices/{slice_id}/topology")
+async def api_create_topology(slice_id: int, topo_req: TopologyPresetRequest, request: Request):
+    """Create predefined topology"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.create_topology_preset(
+        user, slice_id, topo_req.topology_type, topo_req.num_vms,
+        topo_req.flavor, topo_req.internet, topo_req.base_name
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
+@app.get("/api/slices/{slice_id}/export")
+async def api_export_slice(slice_id: int, request: Request):
+    """Export slice to JSON"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.export_slice_json(user, slice_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return JSONResponse(content=result)
+
+@app.post("/api/slices/import")
+async def api_import_slice(request: Request):
+    """Import slice from JSON"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    data = await request.json()
+    success, result = orchestrator.import_slice_json(user, data)
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result

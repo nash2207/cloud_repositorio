@@ -24,9 +24,10 @@ class DeploymentAPI:
         return macs
     
     def create_vm_with_qcow(self, slice_id, vm_id, vm_name, owner, worker_ip, 
-                            flavor_name, data_interfaces_count, internet_enabled=False):
+                            flavor_name, internet_enabled=False):
         """
-        Create VM with flavor-aware interface naming
+        Create VM with only management interface initially
+        Data interfaces are added dynamically when creating links
         
         Args:
             slice_id: Slice ID
@@ -35,7 +36,6 @@ class DeploymentAPI:
             owner: Owner username
             worker_ip: Worker node IP
             flavor_name: Flavor name (cirros, ubuntu)
-            data_interfaces_count: Number of data interfaces
             internet_enabled: Enable internet access (VLAN 400)
         
         Returns:
@@ -50,13 +50,13 @@ class DeploymentAPI:
                 logger.error(f"Invalid flavor: {flavor_name}")
                 return False, None
             
-            interface_count = data_interfaces_count + 1  # +1 for management interface
-            macs = self.generate_unique_macs(vm_id, count=interface_count)
+            # Generate MAC for management interface only
+            macs = self.generate_unique_macs(vm_id, count=1)
             mgmt_ip = f"10.60.7.{100 + vm_id % 100}"
             
             interfaces = []
             
-            # First interface: management (VLAN 400 if internet enabled)
+            # Only management interface (eth0 or ens3)
             mgmt_iface_name = Flavor.get_interface_name(flavor_name, 0)
             if internet_enabled:
                 interfaces.append(Interface(
@@ -67,11 +67,6 @@ class DeploymentAPI:
                 ))
             else:
                 interfaces.append(Interface(mgmt_iface_name, vlan_id=None, mac=macs[0], ip_config=None))
-            
-            # Data interfaces - unconnected initially (will be connected via Links)
-            for i in range(1, data_interfaces_count + 1):
-                iface_name = Flavor.get_interface_name(flavor_name, i)
-                interfaces.append(Interface(iface_name, vlan_id=None, mac=macs[i], link_id=None))
             
             # Create QCOW2 backing image
             image_path = flavor_spec.get("image")
@@ -92,8 +87,7 @@ class DeploymentAPI:
             
             logger.info(
                 f"VM {vm_name} created: Flavor={flavor_name}, "
-                f"Interfaces={[i.name for i in interfaces]}, "
-                f"Internet={internet_enabled}, VNC={vnc_port}"
+                f"Management={mgmt_iface_name}, Internet={internet_enabled}, VNC={vnc_port}"
             )
             return True, vm
             

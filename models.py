@@ -77,12 +77,54 @@ class VM:
         self.worker_ip = worker_ip
         self.vnc_port = vnc_port
         self.interfaces = interfaces
-        self.flavor = flavor
+        self.flavor = flavor  # Store flavor name, not spec
         self.qcow_image = qcow_image
-        self.status = "pending"
+        self.status = "design"  # design -> provisioning -> deployed
         self.pid = None
+    
+    def get_next_interface_name(self):
+        """Get next available interface name based on flavor"""
+        flavor_spec = Flavor.get(self.flavor)
+        if not flavor_spec:
+            return None
+        
+        # Get highest index
+        max_index = 0
+        for iface in self.interfaces:
+            # Extract number from interface name (eth1 -> 1, ens4 -> 4)
+            name = iface.name if isinstance(iface, Interface) else iface['name']
+            import re
+            match = re.search(r'\d+$', name)
+            if match:
+                idx = int(match.group())
+                if flavor_spec['interface_prefix'] == 'ens':
+                    # ens3, ens4, ens5... -> indices 0, 1, 2...
+                    max_index = max(max_index, idx - 3)
+                else:
+                    # eth0, eth1, eth2... -> indices 0, 1, 2...
+                    max_index = max(max_index, idx)
+        
+        # Return next interface name
+        next_index = max_index + 1
+        return Flavor.get_interface_name(self.flavor, next_index)
+    
+    def add_interface(self, interface):
+        """Add a new interface to this VM"""
+        self.interfaces.append(interface)
+    
     def to_dict(self):
-        return {"vm_id": self.vm_id, "name": self.name, "owner": self.owner, "worker_ip": self.worker_ip, "vnc_port": self.vnc_port, "interfaces": [i.to_dict() for i in self.interfaces], "flavor": self.flavor, "qcow_image": self.qcow_image, "status": self.status, "pid": self.pid}
+        return {
+            "vm_id": self.vm_id,
+            "name": self.name,
+            "owner": self.owner,
+            "worker_ip": self.worker_ip,
+            "vnc_port": self.vnc_port,
+            "interfaces": [i.to_dict() if isinstance(i, Interface) else i for i in self.interfaces],
+            "flavor": self.flavor,
+            "qcow_image": self.qcow_image,
+            "status": self.status,
+            "pid": self.pid
+        }
 
 class Network:
     def __init__(self, vlan_id, cidr, gateway_ip, dhcp_enabled=False, dhcp_range=None):
