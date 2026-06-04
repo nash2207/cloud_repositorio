@@ -4,6 +4,7 @@ Bare-Metal Compute Provider - QEMU/KVM implementation
 import logging
 import re
 from providers.base_compute import BaseComputeProvider
+from models import Flavor
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +22,17 @@ class BareMetalComputeProvider(BaseComputeProvider):
             vm_name = vm_dict["name"]
             vnc_port = vm_dict["vnc_port"]
             qcow_image = vm_dict.get("qcow_image", "")
-            flavor = vm_dict.get("flavor", {})
+            flavor_name = vm_dict.get("flavor", "cirros")
             interfaces = vm_dict.get("interfaces", [])
             
-            cores = flavor.get("cores", 1)
-            ram_mb = int(flavor.get("ram_gb", 0.5) * 1024)
+            # Get flavor specs from Flavor class
+            flavor_spec = Flavor.get(flavor_name)
+            if not flavor_spec:
+                logger.error(f"Unknown flavor: {flavor_name}")
+                return False, None
+            
+            cores = flavor_spec.get("cores", 1)
+            ram_mb = int(flavor_spec.get("ram_gb", 0.5) * 1024)
             
             # Build QEMU command
             qemu_cmd = f"sudo qemu-system-x86_64 -enable-kvm -m {ram_mb} -smp {cores} "
@@ -33,9 +40,10 @@ class BareMetalComputeProvider(BaseComputeProvider):
             
             # Add network interfaces with TAP devices
             for idx, iface in enumerate(interfaces):
-                tap_name = f"tap_{vm_id}_{iface['name']}"
-                mac = iface.get("mac", "")
-                vlan_id = iface.get("vlan_id")
+                iface_name = iface["name"] if isinstance(iface, dict) else iface.name
+                tap_name = f"tap_{vm_id}_{iface_name}"
+                mac = iface.get("mac", "") if isinstance(iface, dict) else iface.mac
+                vlan_id = iface.get("vlan_id") if isinstance(iface, dict) else iface.vlan_id
                 
                 # Create TAP and connect to OVS with VLAN tag
                 if vlan_id:
@@ -68,11 +76,13 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 
                 # Log static IP info for eth0/ens3 with VLAN 400
                 for iface in interfaces:
-                    if iface.get("vlan_id") == 400:
-                        ip_config = iface.get("ip_config", {})
+                    vlan_id = iface.get("vlan_id") if isinstance(iface, dict) else iface.vlan_id
+                    if vlan_id == 400:
+                        ip_config = iface.get("ip_config", {}) if isinstance(iface, dict) else iface.ip_config
                         static_ip = ip_config.get("ip") if ip_config else None
+                        iface_name = iface["name"] if isinstance(iface, dict) else iface.name
                         if static_ip:
-                            logger.info(f"VM {vm_name} should use static IP {static_ip} on {iface['name']}")
+                            logger.info(f"VM {vm_name} should use static IP {static_ip} on {iface_name}")
                 
                 return True, pid.strip() if success_pid else None
             else:
@@ -96,7 +106,8 @@ class BareMetalComputeProvider(BaseComputeProvider):
             
             # Cleanup TAP devices
             for iface in interfaces:
-                tap_name = f"tap_{vm_id}_{iface['name']}"
+                iface_name = iface["name"] if isinstance(iface, dict) else iface.name
+                tap_name = f"tap_{vm_id}_{iface_name}"
                 cleanup_cmd = f"""
                 sudo ovs-vsctl --if-exists del-port br-int {tap_name}
                 sudo ip link del {tap_name} 2>/dev/null || true
