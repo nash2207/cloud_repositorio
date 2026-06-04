@@ -4,12 +4,14 @@ users:
   admin:
     username: admin
     password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+    role: admin
     quota_vms: 10
     used_vms: 0
     slices: []
   student:
     username: student
     password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+    role: student
     quota_vms: 6
     used_vms: 0
     slices: []
@@ -43,3 +45,7 @@ workers:
 slices: {}
 next_vm_id: 1000
 next_vlan_id: 100
+
+# Metrics storage (updated by monitoring system)
+vm_metrics: {}
+worker_metrics: {}

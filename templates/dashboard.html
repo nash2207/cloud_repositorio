@@ -7,152 +7,247 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
-        #network { height: 600px; border: 1px solid #374151; background: #1f2937; cursor: crosshair; }
-        .modal { display: none; position: fixed; z-index: 50; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
-        .modal.active { display: flex; align-items: center; justify-content: center; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .provisioning { animation: pulse 1s infinite; }
-        .link-mode { border: 3px solid #10b981 !important; }
+        #network { 
+            height: 100%; 
+            border: 1px solid #374151; 
+            background: #1f2937; 
+            border-radius: 8px;
+        }
+        .modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 50; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.7); 
+        }
+        .modal.active { 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+        }
+        .slice-item {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .slice-item:hover {
+            background: #374151;
+            transform: translateX(4px);
+        }
+        .slice-item.active {
+            background: #1e40af;
+            border-left: 4px solid #3b82f6;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-design { background: #6b7280; }
+        .status-provisioning { background: #f59e0b; animation: pulse 1s infinite; }
+        .status-deployed { background: #10b981; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        .link-mode-active { border: 3px solid #10b981 !important; }
         .error-input { border: 2px solid #ef4444 !important; }
         .success-input { border: 2px solid #10b981 !important; }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
     <!-- Header -->
-    <header class="bg-gray-800 p-4 flex justify-between items-center">
-        <h1 class="text-2xl font-bold">Slice Manager</h1>
-        <div class="flex items-center gap-4">
-            <span class="text-gray-300">Welcome, <span id="username">{{ username }}</span></span>
-            <button onclick="logout()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded">Logout</button>
+    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold">Slice Manager</h1>
+                <p class="text-sm text-gray-400">Network Slice Orchestrator</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <p class="text-sm text-gray-400">Welcome</p>
+                    <p class="font-semibold" id="username">{{ username }}</p>
+                </div>
+                <button onclick="logout()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded transition">
+                    Logout
+                </button>
+            </div>
         </div>
     </header>
 
-    <div class="flex">
-        <!-- Sidebar -->
-        <aside class="w-64 bg-gray-800 min-h-screen p-4 space-y-2">
-            <button onclick="openModal('createSliceModal')" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded">Create Slice</button>
-            <button onclick="openModal('addVMModal')" class="w-full bg-green-600 hover:bg-green-700 py-2 rounded">Add VM</button>
-            <button onclick="toggleLinkMode()" id="linkModeBtn" class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded">Create Link (Click Mode)</button>
-            <button onclick="cleanupOrphaned()" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded">Cleanup Orphaned</button>
+    <!-- Main Content -->
+    <div class="flex h-screen" style="height: calc(100vh - 89px);">
+        <!-- Left Sidebar: Slices Inventory -->
+        <aside class="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
+            <!-- Actions -->
+            <div class="p-4 space-y-2 border-b border-gray-700">
+                <button onclick="openModal('createSliceModal')" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded transition">
+                    ➕ Create Slice
+                </button>
+                <button onclick="openModal('addVMModal')" class="w-full bg-green-600 hover:bg-green-700 py-2 rounded transition">
+                    🖥️ Add VM
+                </button>
+                <button onclick="toggleLinkMode()" id="linkModeBtn" class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded transition">
+                    🔗 Create Link
+                </button>
+            </div>
+
+            <!-- Quotas -->
+            <div class="p-4 border-b border-gray-700">
+                <h3 class="text-sm font-semibold text-gray-400 mb-3">RESOURCE USAGE</h3>
+                <div class="space-y-3">
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span>VMs</span>
+                            <span><span id="usedVMs">0</span>/<span id="quotaVMs">10</span></span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-2">
+                            <div id="vmProgressBar" class="bg-blue-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs">
+                            <span>Slices</span>
+                            <span id="sliceCount">0</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs">
+                            <span>VLAN Pool</span>
+                            <span id="vlanPool" class="text-gray-400">200-219</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- My Slices List -->
+            <div class="flex-1 overflow-y-auto p-4">
+                <h3 class="text-sm font-semibold text-gray-400 mb-3">MY SLICES</h3>
+                <div id="slicesList" class="space-y-2">
+                    <p class="text-gray-500 text-sm text-center py-8">No slices yet</p>
+                </div>
+            </div>
+
+            <!-- Actions Bottom -->
+            <div class="p-4 border-t border-gray-700">
+                <button onclick="cleanupOrphaned()" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded text-sm transition">
+                    🧹 Cleanup Orphaned VMs
+                </button>
+            </div>
         </aside>
 
-        <!-- Main Content -->
-        <main class="flex-1 p-6 space-y-6">
-            <!-- Quotas -->
-            <section class="grid grid-cols-4 gap-4">
-                <div class="bg-gray-800 p-4 rounded">
-                    <h3 class="text-gray-400 text-sm">VMs Used</h3>
-                    <p class="text-2xl font-bold"><span id="usedVMs">0</span>/<span id="quotaVMs">10</span></p>
-                    <progress id="vmProgress" max="10" value="0" class="w-full mt-2"></progress>
+        <!-- Right Panel: Topology Viewer -->
+        <main class="flex-1 flex flex-col bg-gray-900">
+            <!-- Topology Info Bar -->
+            <div class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-semibold" id="topologyTitle">Network Topology</h2>
+                    <p class="text-xs text-gray-400" id="topologySubtitle">Select a slice to view topology</p>
                 </div>
-                <div class="bg-gray-800 p-4 rounded">
-                    <h3 class="text-gray-400 text-sm">Slices</h3>
-                    <p class="text-2xl font-bold" id="sliceCount">0</p>
+                <div id="sliceActions" class="hidden space-x-2">
+                    <button onclick="deployCurrentSlice()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition">
+                        🚀 Deploy
+                    </button>
+                    <button onclick="deleteCurrentSlice()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm transition">
+                        🗑️ Delete
+                    </button>
                 </div>
-                <div class="bg-gray-800 p-4 rounded">
-                    <h3 class="text-gray-400 text-sm">VLAN Pool</h3>
-                    <p class="text-2xl font-bold" id="vlanPool">200-219</p>
-                </div>
-                <div class="bg-gray-800 p-4 rounded">
-                    <h3 class="text-gray-400 text-sm">Status</h3>
-                    <p class="text-2xl font-bold text-green-400">Online</p>
-                </div>
-            </section>
+            </div>
 
-            <!-- Network Visualization -->
-            <section class="bg-gray-800 p-4 rounded">
-                <h2 class="text-xl font-bold mb-2">Network Topology</h2>
-                <p class="text-sm text-gray-400 mb-2" id="linkModeInfo">Select a slice below to view topology. Click "Create Link" button, then click two VMs to connect them.</p>
-                <div id="network"></div>
-            </section>
+            <!-- Topology Canvas -->
+            <div class="flex-1 p-6">
+                <div id="network" class="w-full h-full"></div>
+            </div>
 
-            <!-- Slices Table -->
-            <section class="bg-gray-800 p-4 rounded">
-                <h2 class="text-xl font-bold mb-4">My Slices</h2>
-                <table class="w-full">
-                    <thead>
-                        <tr class="border-b border-gray-700">
-                            <th class="text-left p-2">ID</th>
-                            <th class="text-left p-2">Status</th>
-                            <th class="text-left p-2">VMs</th>
-                            <th class="text-left p-2">Links</th>
-                            <th class="text-left p-2">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="slicesTable"></tbody>
-                </table>
-            </section>
+            <!-- Empty State -->
+            <div id="emptyState" class="flex-1 flex items-center justify-center">
+                <div class="text-center">
+                    <div class="text-6xl mb-4">🌐</div>
+                    <h3 class="text-xl font-semibold text-gray-400 mb-2">No Slice Selected</h3>
+                    <p class="text-gray-500">Create a slice or select one from the list to view its topology</p>
+                </div>
+            </div>
         </main>
     </div>
 
     <!-- Modals -->
     <div id="createSliceModal" class="modal">
-        <div class="bg-gray-800 p-6 rounded w-96">
-            <h2 class="text-xl font-bold mb-4">Create Slice</h2>
+        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl">
+            <h2 class="text-xl font-bold mb-4">Create New Slice</h2>
             <form onsubmit="createSlice(event)">
                 <div class="mb-4">
-                    <input type="text" id="sliceName" placeholder="Slice Name" required 
+                    <label class="block text-sm text-gray-400 mb-2">Slice Name</label>
+                    <input type="text" id="sliceName" placeholder="my-network-slice" required 
                         pattern="[a-zA-Z0-9_-]+" 
-                        title="Only letters, numbers, underscore and hyphen allowed"
-                        class="w-full px-4 py-2 bg-gray-700 rounded">
-                    <p class="text-xs text-gray-400 mt-1">Only alphanumeric, underscore, hyphen</p>
+                        class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
+                    <p class="text-xs text-gray-500 mt-1">Only alphanumeric, underscore, hyphen</p>
                 </div>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded">Create</button>
-                    <button type="button" onclick="closeModal('createSliceModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded">Cancel</button>
+                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded transition">Create</button>
+                    <button type="button" onclick="closeModal('createSliceModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
     <div id="addVMModal" class="modal">
-        <div class="bg-gray-800 p-6 rounded w-96">
+        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl">
             <h2 class="text-xl font-bold mb-4">Add VM to Slice</h2>
             <form onsubmit="addVM(event)">
-                <input type="number" id="vmSliceId" placeholder="Slice ID" required min="1" 
-                    class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
-                <input type="text" id="vmName" placeholder="VM Name" required 
-                    pattern="[a-zA-Z0-9_-]+" 
-                    title="Only letters, numbers, underscore and hyphen"
-                    class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
-                <select id="vmFlavor" class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
-                    <option value="cirros">Cirros (1GB) - eth0, eth1, eth2...</option>
-                    <option value="ubuntu">Ubuntu (2.2GB) - ens3, ens4, ens5...</option>
-                </select>
-                <input type="number" id="vmInterfaces" placeholder="Data Interfaces" required value="1" min="1" max="10" 
-                    class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
-                <label class="flex items-center gap-2 mb-4">
-                    <input type="checkbox" id="vmInternet" class="w-4 h-4">
-                    <span>Enable Internet (VLAN 400)</span>
-                </label>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">Slice ID</label>
+                    <input type="number" id="vmSliceId" placeholder="Enter Slice ID" required min="1" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-green-500 focus:outline-none">
+                </div>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">VM Name</label>
+                    <input type="text" id="vmName" placeholder="vm1" required pattern="[a-zA-Z0-9_-]+" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-green-500 focus:outline-none">
+                </div>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">Flavor</label>
+                    <select id="vmFlavor" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-green-500 focus:outline-none">
+                        <option value="cirros">Cirros (1GB) - eth0, eth1...</option>
+                        <option value="ubuntu">Ubuntu (2.2GB) - ens3, ens4...</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">Data Interfaces</label>
+                    <input type="number" id="vmInterfaces" placeholder="1" required value="1" min="1" max="10" 
+                        class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-green-500 focus:outline-none">
+                </div>
+                <div class="mb-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="vmInternet" class="w-4 h-4">
+                        <span class="text-sm">Enable Internet (VLAN 400)</span>
+                    </label>
+                </div>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded">Add</button>
-                    <button type="button" onclick="closeModal('addVMModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded">Cancel</button>
+                    <button type="submit" class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded transition">Add VM</button>
+                    <button type="button" onclick="closeModal('addVMModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
     <div id="createLinkModal" class="modal">
-        <div class="bg-gray-800 p-6 rounded w-96">
+        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl">
             <h2 class="text-xl font-bold mb-4">Create Link</h2>
-            <p class="text-sm text-gray-400 mb-4">Selected VMs: <span id="selectedVMsInfo">None</span></p>
+            <p class="text-sm text-gray-400 mb-4">Selected: <span id="selectedVMsInfo" class="text-blue-400">None</span></p>
             <form onsubmit="createLinkFromForm(event)">
-                <input type="number" id="linkSliceId" placeholder="Slice ID" required readonly
-                    class="w-full px-4 py-2 bg-gray-600 rounded mb-2">
-                <input type="number" id="linkVM1" placeholder="VM1 ID" required readonly
-                    class="w-full px-4 py-2 bg-gray-600 rounded mb-2">
-                <select id="linkVM1Iface" required class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
+                <input type="number" id="linkSliceId" readonly class="w-full px-4 py-2 bg-gray-600 rounded mb-2 border border-gray-600">
+                <input type="number" id="linkVM1" readonly class="w-full px-4 py-2 bg-gray-600 rounded mb-2 border border-gray-600">
+                <select id="linkVM1Iface" required class="w-full px-4 py-2 bg-gray-700 rounded mb-2 border border-gray-600 focus:border-purple-500 focus:outline-none">
                     <option value="">Select VM1 Interface</option>
                 </select>
-                <input type="number" id="linkVM2" placeholder="VM2 ID" required readonly
-                    class="w-full px-4 py-2 bg-gray-600 rounded mb-2">
-                <select id="linkVM2Iface" required class="w-full px-4 py-2 bg-gray-700 rounded mb-2">
+                <input type="number" id="linkVM2" readonly class="w-full px-4 py-2 bg-gray-600 rounded mb-2 border border-gray-600">
+                <select id="linkVM2Iface" required class="w-full px-4 py-2 bg-gray-700 rounded mb-4 border border-gray-600 focus:border-purple-500 focus:outline-none">
                     <option value="">Select VM2 Interface</option>
                 </select>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded">Create</button>
-                    <button type="button" onclick="closeModal('createLinkModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded">Cancel</button>
+                    <button type="submit" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded transition">Create Link</button>
+                    <button type="button" onclick="closeModal('createLinkModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
                 </div>
             </form>
         </div>
@@ -165,8 +260,9 @@
         let deployInterval = null;
         let linkMode = false;
         let selectedVMs = [];
+        let allSlices = [];
 
-        // API Helpers
+        // API Helper
         async function apiCall(url, options = {}) {
             const res = await fetch(url, { ...options, credentials: 'include' });
             if (!res.ok) {
@@ -176,37 +272,9 @@
             return res.json();
         }
 
-        // Input Validation
-        function validateInput(input) {
-            if (input.validity.valid) {
-                input.classList.remove('error-input');
-                input.classList.add('success-input');
-                return true;
-            } else {
-                input.classList.add('error-input');
-                input.classList.remove('success-input');
-                return false;
-            }
-        }
-
-        // Add validation listeners to all inputs
-        document.addEventListener('DOMContentLoaded', () => {
-            document.querySelectorAll('input, select').forEach(input => {
-                input.addEventListener('blur', () => validateInput(input));
-                input.addEventListener('input', () => {
-                    if (input.classList.contains('error-input')) {
-                        validateInput(input);
-                    }
-                });
-            });
-        });
-
         // Modal Management
         function openModal(id) { 
             document.getElementById(id).classList.add('active'); 
-            document.querySelectorAll('.error-input, .success-input').forEach(el => {
-                el.classList.remove('error-input', 'success-input');
-            });
         }
         function closeModal(id) { 
             document.getElementById(id).classList.remove('active'); 
@@ -225,8 +293,8 @@
             const data = await apiCall('/api/quotas');
             document.getElementById('usedVMs').textContent = data.used_vms;
             document.getElementById('quotaVMs').textContent = data.quota_vms;
-            document.getElementById('vmProgress').max = data.quota_vms;
-            document.getElementById('vmProgress').value = data.used_vms;
+            const percentage = (data.used_vms / data.quota_vms) * 100;
+            document.getElementById('vmProgressBar').style.width = percentage + '%';
             document.getElementById('sliceCount').textContent = data.slices;
             document.getElementById('vlanPool').textContent = data.vlan_pool;
         }
@@ -234,55 +302,104 @@
         // Load Slices
         async function loadSlices() {
             const data = await apiCall('/api/slices');
-            const tbody = document.getElementById('slicesTable');
-            tbody.innerHTML = data.slices.map(s => `
-                <tr class="border-b border-gray-700 hover:bg-gray-700 cursor-pointer" onclick="viewSlice(${s.slice_id})">
-                    <td class="p-2">${s.slice_id}</td>
-                    <td class="p-2"><span class="px-2 py-1 rounded text-xs ${s.status === 'deployed' ? 'bg-green-600' : s.status === 'provisioning' ? 'bg-yellow-600' : 'bg-gray-600'}">${s.status}</span></td>
-                    <td class="p-2">${s.vms.length}</td>
-                    <td class="p-2">${s.links.length}</td>
-                    <td class="p-2">
-                        <button onclick="event.stopPropagation(); deploySlice(${s.slice_id})" class="bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded text-sm mr-2">Deploy</button>
-                        <button onclick="event.stopPropagation(); deleteSlice(${s.slice_id})" class="bg-red-500 hover:bg-red-600 px-3 py-1 rounded text-sm">Delete</button>
-                    </td>
-                </tr>
+            allSlices = data.slices;
+            
+            const container = document.getElementById('slicesList');
+            if (allSlices.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 text-sm text-center py-8">No slices yet</p>';
+                return;
+            }
+            
+            container.innerHTML = allSlices.map(s => `
+                <div class="slice-item ${currentSliceId === s.slice_id ? 'active' : ''} p-3 rounded border border-gray-700" onclick="viewSlice(${s.slice_id})">
+                    <div class="flex justify-between items-start mb-2">
+                        <div>
+                            <p class="font-semibold">Slice #${s.slice_id}</p>
+                            <p class="text-xs text-gray-400">VLAN ${s.vlan_pool_start}-${s.vlan_pool_end}</p>
+                        </div>
+                        <span class="status-badge status-${s.status}">${s.status}</span>
+                    </div>
+                    <div class="flex gap-4 text-xs text-gray-400">
+                        <span>🖥️ ${s.vms.length} VMs</span>
+                        <span>🔗 ${s.links.length} Links</span>
+                    </div>
+                </div>
             `).join('');
         }
 
-        // View Slice in Network
+        // View Slice Topology
         async function viewSlice(sliceId) {
             currentSliceId = sliceId;
             currentSliceData = await apiCall(`/api/slices/${sliceId}`);
             
+            // Update UI
+            document.getElementById('emptyState').style.display = 'none';
+            document.getElementById('network').style.display = 'block';
+            document.getElementById('sliceActions').classList.remove('hidden');
+            document.getElementById('topologyTitle').textContent = `Slice #${sliceId}`;
+            document.getElementById('topologySubtitle').textContent = `${currentSliceData.vms.length} VMs, ${currentSliceData.links.length} Links`;
+            
+            // Reload slices list to update active state
+            await loadSlices();
+            
+            // Draw topology
+            drawTopology();
+        }
+
+        // Draw Topology with Vis.js
+        function drawTopology() {
             const nodes = currentSliceData.vms.map(vm => ({
                 id: vm.vm_id,
-                label: `${vm.name}\nVNC: ${vm.vnc_port}\n${vm.worker_ip}`,
+                label: `${vm.name}\n💻 ${vm.worker_ip}\n🖥️ VNC:${vm.vnc_port}`,
                 color: currentSliceData.status === 'deployed' ? '#10b981' : currentSliceData.status === 'provisioning' ? '#f59e0b' : '#6b7280',
                 shape: 'circle',
-                size: 30,
-                font: { color: '#fff', size: 12 }
+                size: 35,
+                font: { color: '#fff', size: 12 },
+                borderWidth: 3,
+                borderWidthSelected: 5
             }));
 
-            const edges = currentSliceData.links.map(link => ({
+            const edges = currentSliceData.links.map((link, idx) => ({
+                id: `link-${idx}`,
                 from: link.vm1_id,
                 to: link.vm2_id,
                 label: `VLAN ${link.vlan_id}\n${link.vm1_interface} ↔ ${link.vm2_interface}`,
-                color: '#8b5cf6',
-                font: { color: '#fff', size: 10 }
+                color: { color: '#8b5cf6', highlight: '#a78bfa' },
+                font: { color: '#fff', size: 11 },
+                width: 3,
+                smooth: { type: 'curvedCW', roundness: 0.2 }
             }));
 
             const container = document.getElementById('network');
             const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
             const options = {
-                physics: { enabled: true, barnesHut: { gravitationalConstant: -2000, springLength: 200 } },
-                interaction: { hover: true },
-                nodes: { font: { color: '#fff' } },
-                edges: { font: { color: '#fff', align: 'middle' } }
+                physics: { 
+                    enabled: true, 
+                    barnesHut: { 
+                        gravitationalConstant: -3000, 
+                        springLength: 200,
+                        avoidOverlap: 0.5
+                    }
+                },
+                interaction: { 
+                    hover: true, 
+                    dragNodes: true,
+                    zoomView: true
+                },
+                nodes: { 
+                    font: { color: '#fff' },
+                    shadow: true
+                },
+                edges: { 
+                    font: { color: '#fff', align: 'middle' },
+                    shadow: true
+                }
             };
             
             if (network) network.destroy();
             network = new vis.Network(container, data, options);
             
+            // Handle node clicks for link creation
             network.on('click', function(params) {
                 if (linkMode && params.nodes.length > 0) {
                     handleNodeClick(params.nodes[0]);
@@ -290,38 +407,30 @@
             });
         }
 
-        // Toggle Link Creation Mode
+        // Toggle Link Mode
         function toggleLinkMode() {
             linkMode = !linkMode;
             const btn = document.getElementById('linkModeBtn');
-            const info = document.getElementById('linkModeInfo');
             const networkDiv = document.getElementById('network');
             
             if (linkMode) {
-                btn.textContent = 'Cancel Link Mode';
+                btn.textContent = '❌ Cancel Link Mode';
                 btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
                 btn.classList.add('bg-red-600', 'hover:bg-red-700');
-                info.textContent = '🔗 LINK MODE ACTIVE: Click two VMs to connect them';
-                info.classList.add('text-green-400', 'font-bold');
-                networkDiv.classList.add('link-mode');
+                networkDiv.classList.add('link-mode-active');
                 selectedVMs = [];
             } else {
-                btn.textContent = 'Create Link (Click Mode)';
+                btn.textContent = '🔗 Create Link';
                 btn.classList.remove('bg-red-600', 'hover:bg-red-700');
                 btn.classList.add('bg-purple-600', 'hover:bg-purple-700');
-                info.textContent = 'Select a slice below to view topology. Click "Create Link" button, then click two VMs to connect them.';
-                info.classList.remove('text-green-400', 'font-bold');
-                networkDiv.classList.remove('link-mode');
+                networkDiv.classList.remove('link-mode-active');
                 selectedVMs = [];
             }
         }
 
         // Handle node click in link mode
         function handleNodeClick(nodeId) {
-            if (!currentSliceData) {
-                alert('Please select a slice first');
-                return;
-            }
+            if (!currentSliceData) return;
 
             if (selectedVMs.includes(nodeId)) {
                 selectedVMs = selectedVMs.filter(id => id !== nodeId);
@@ -329,14 +438,15 @@
                 selectedVMs.push(nodeId);
             }
 
+            // Highlight selected nodes
             const nodes = network.body.data.nodes;
             currentSliceData.vms.forEach(vm => {
                 const node = nodes.get(vm.vm_id);
                 if (selectedVMs.includes(vm.vm_id)) {
-                    node.borderWidth = 4;
+                    node.borderWidth = 5;
                     node.color = { background: '#10b981', border: '#fbbf24' };
                 } else {
-                    node.borderWidth = 1;
+                    node.borderWidth = 3;
                     node.color = currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280';
                 }
                 nodes.update(node);
@@ -361,20 +471,11 @@
             }
         }
 
-        // Open link modal with selected VMs
         function openLinkModal() {
-            if (selectedVMs.length !== 2) {
-                alert('Please select exactly 2 VMs');
-                return;
-            }
+            if (selectedVMs.length !== 2) return;
 
             const vm1 = currentSliceData.vms.find(v => v.vm_id === selectedVMs[0]);
             const vm2 = currentSliceData.vms.find(v => v.vm_id === selectedVMs[1]);
-
-            if (!vm1 || !vm2) {
-                alert('VMs not found');
-                return;
-            }
 
             document.getElementById('linkSliceId').value = currentSliceId;
             document.getElementById('linkVM1').value = vm1.vm_id;
@@ -400,18 +501,21 @@
             });
         }
 
-        // Deploy Slice with Polling
-        async function deploySlice(sliceId) {
+        // Deploy Current Slice
+        async function deployCurrentSlice() {
+            if (!currentSliceId) return;
+            
             try {
-                await apiCall(`/api/slices/${sliceId}/deploy`, { method: 'POST' });
+                await apiCall(`/api/slices/${currentSliceId}/deploy`, { method: 'POST' });
                 
+                // Start polling
                 if (deployInterval) clearInterval(deployInterval);
                 deployInterval = setInterval(async () => {
-                    const slice = await apiCall(`/api/slices/${sliceId}`);
+                    const slice = await apiCall(`/api/slices/${currentSliceId}`);
                     if (slice.status === 'deployed') {
                         clearInterval(deployInterval);
                         await loadSlices();
-                        if (currentSliceId === sliceId) await viewSlice(sliceId);
+                        await viewSlice(currentSliceId);
                     }
                 }, 3000);
                 
@@ -421,16 +525,33 @@
             }
         }
 
+        // Delete Current Slice
+        async function deleteCurrentSlice() {
+            if (!currentSliceId) return;
+            if (!confirm(`Delete Slice #${currentSliceId}?`)) return;
+            
+            try {
+                await apiCall(`/api/slices/${currentSliceId}`, { method: 'DELETE' });
+                currentSliceId = null;
+                currentSliceData = null;
+                document.getElementById('emptyState').style.display = 'flex';
+                document.getElementById('network').style.display = 'none';
+                document.getElementById('sliceActions').classList.add('hidden');
+                if (network) network.destroy();
+                await loadSlices();
+                await loadQuotas();
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
         // Create Slice
         async function createSlice(e) {
             e.preventDefault();
             const nameInput = document.getElementById('sliceName');
-            if (!validateInput(nameInput)) {
-                alert('Invalid slice name');
-                return;
-            }
+            
             try {
-                await apiCall('/api/slices', {
+                const result = await apiCall('/api/slices', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: nameInput.value })
@@ -439,6 +560,11 @@
                 await loadSlices();
                 await loadQuotas();
                 nameInput.value = '';
+                
+                // Auto-select the new slice
+                if (result.slice_id) {
+                    await viewSlice(result.slice_id);
+                }
             } catch (err) {
                 alert('Error: ' + err.message);
             }
@@ -447,25 +573,17 @@
         // Add VM
         async function addVM(e) {
             e.preventDefault();
-            const sliceIdInput = document.getElementById('vmSliceId');
-            const nameInput = document.getElementById('vmName');
-            const interfacesInput = document.getElementById('vmInterfaces');
             
-            if (!validateInput(sliceIdInput) || !validateInput(nameInput) || !validateInput(interfacesInput)) {
-                alert('Please fix invalid inputs');
-                return;
-            }
-
             try {
-                const sliceId = parseInt(sliceIdInput.value);
+                const sliceId = parseInt(document.getElementById('vmSliceId').value);
                 await apiCall(`/api/slices/${sliceId}/vms`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         slice_id: sliceId,
-                        vm_name: nameInput.value,
+                        vm_name: document.getElementById('vmName').value,
                         flavor: document.getElementById('vmFlavor').value,
-                        data_interfaces: parseInt(interfacesInput.value),
+                        data_interfaces: parseInt(document.getElementById('vmInterfaces').value),
                         internet_enabled: document.getElementById('vmInternet').checked
                     })
                 });
@@ -478,9 +596,10 @@
             }
         }
 
-        // Create Link from Form
+        // Create Link
         async function createLinkFromForm(e) {
             e.preventDefault();
+            
             try {
                 const sliceId = parseInt(document.getElementById('linkSliceId').value);
                 await apiCall(`/api/slices/${sliceId}/links`, {
@@ -497,25 +616,7 @@
                 closeModal('createLinkModal');
                 await loadSlices();
                 if (currentSliceId === sliceId) await viewSlice(sliceId);
-                
                 if (linkMode) toggleLinkMode();
-            } catch (err) {
-                alert('Error: ' + err.message);
-            }
-        }
-
-        // Delete Slice
-        async function deleteSlice(sliceId) {
-            if (!confirm('Delete slice ' + sliceId + '?')) return;
-            try {
-                await apiCall(`/api/slices/${sliceId}`, { method: 'DELETE' });
-                await loadSlices();
-                await loadQuotas();
-                if (currentSliceId === sliceId) {
-                    currentSliceId = null;
-                    currentSliceData = null;
-                    if (network) network.destroy();
-                }
             } catch (err) {
                 alert('Error: ' + err.message);
             }
@@ -523,7 +624,7 @@
 
         // Cleanup Orphaned
         async function cleanupOrphaned() {
-            if (!confirm('Cleanup orphaned VMs?')) return;
+            if (!confirm('Cleanup orphaned VMs? This will kill VMs not registered in the database.')) return;
             try {
                 await apiCall('/api/cleanup-orphaned', { method: 'POST' });
                 alert('Cleanup completed');

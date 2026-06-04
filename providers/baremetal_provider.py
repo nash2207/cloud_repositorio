@@ -115,11 +115,16 @@ class BareMetalComputeProvider(BaseComputeProvider):
             cmd = "ps aux | grep 'qemu-system-x86_64.*daemonize' | grep -v grep"
             success, output = self.executor.execute_direct(worker_ip, cmd, timeout=10)
             
+            # grep returns exit code 1 when no matches found - this is normal
             if not success:
-                # If command fails, it might be because grep found nothing (exit code 1)
-                # That's OK, just means no VMs running
-                logger.debug(f"No QEMU processes found on {worker_ip}")
-                return []
+                # Check if it's just "no matches" (empty output) or real error
+                if not output or output.strip() == "":
+                    logger.debug(f"No QEMU processes found on {worker_ip}")
+                    return []
+                else:
+                    # Real error with output
+                    logger.warning(f"Error scanning {worker_ip}: {output}")
+                    return []
             
             if not output or not output.strip():
                 return []

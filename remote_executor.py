@@ -53,8 +53,14 @@ class RemoteExecutor:
             if result.returncode != 0:
                 # Sometimes stderr is empty but stdout has the error
                 error_msg = result.stderr.strip() or result.stdout.strip() or f"Command failed with code {result.returncode}"
-                logger.error(f"SSH Error on {remote_ip}: {error_msg}")
-                logger.debug(f"Failed command: {command[:100]}...")
+                
+                # Don't log as ERROR if it's just grep finding nothing (exit code 1)
+                if result.returncode == 1 and 'grep' in command and not result.stderr.strip():
+                    logger.debug(f"Command returned no matches on {remote_ip}: {command[:50]}...")
+                else:
+                    logger.error(f"SSH Error on {remote_ip}: {error_msg}")
+                    logger.debug(f"Failed command: {command[:100]}...")
+                
                 return False, error_msg
             
             return True, result.stdout
