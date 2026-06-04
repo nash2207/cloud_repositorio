@@ -68,27 +68,50 @@ class SyncManager:
         """Kill all VMs not registered in database"""
         logger.info("Cleaning up orphaned VMs...")
         
-        for worker_ip in self.workers:
-            running_vms = self.compute_provider.get_running_vms(worker_ip)
-            
-            for vm_info in running_vms:
-                vm_name = vm_info['name']
-                pid = vm_info['pid']
-                
-                # Check if VM is in database
-                found = any(
-                    any(vm.get("name") == vm_name and vm.get("worker_ip") == worker_ip 
-                        for vm in slice_data.get("vms", []))
-                    for slice_data in self.db.data.get("slices", {}).values()
-                )
-                
-                if not found:
-                    logger.info(f"Killing orphaned VM: {vm_name} (PID: {pid}) on {worker_ip}")
-                    kill_cmd = f"sudo kill -9 {pid}"
-                    self.executor.execute_direct(worker_ip, kill_cmd)
-                    
-                    # Cleanup qcow2 file
-                    cleanup_cmd = f"rm -f {vm_info['qcow_path']}"
-                    self.executor.execute_direct(worker_ip, cleanup_cmd)
+        orphaned_count = 0
         
-        logger.info("Orphaned VM cleanup completed")
+        for worker_ip in self.workers:
+            try:
+                running_vms = self.compute_provider.get_running_vms(worker_ip)
+                
+                if not running_vms:
+                    logger.info(f"No VMs running on {worker_ip}")
+                    continue
+                
+                logger.info(f"Checking {len(running_vms)} VMs on {worker_ip}")
+                
+                for vm_info in running_vms:
+                    vm_name = vm_info['name']
+                    pid = vm_info['pid']
+                    
+                    # Check if VM is in database
+                    found = any(
+                        any(vm.get("name") == vm_name and vm.get("worker_ip") == worker_ip 
+                            for vm in slice_data.get("vms", []))
+                        for slice_data in self.db.data.get("slices", {}).values()
+                    )
+                    
+                    if not found:
+                        logger.info(f"Killing orphaned VM: {vm_name} (PID: {pid}) on {worker_ip}")
+                        kill_cmd = f"sudo kill -9 {pid}"
+                        success, _ = self.executor.execute_direct(worker_ip, kill_cmd)
+                        
+                        if success:
+                            orphaned_count += 1
+                            # Cleanup qcow2 file
+                            qcow_path = vm_info.get('qcow_path', '')
+                            if qcow_path:
+                                cleanup_cmd = f"rm -f {qcow_path}"
+                                self.executor.execute_direct(worker_ip, cleanup_cmd)
+                        else:
+                            logger.warning(f"Failed to kill VM {vm_name} on {worker_ip}")
+                    else:
+                        logger.debug(f"VM {vm_name} is registered in database, skipping")
+                        
+            except Exception as e:
+                logger.error(f"Error processing worker {worker_ip}: {e}")
+        
+        if orphaned_count > 0:
+            logger.info(f"Orphaned VM cleanup completed: {orphaned_count} VMs killed")
+        else:
+            logger.info("Orphaned VM cleanup completed: No orphaned VMs found")

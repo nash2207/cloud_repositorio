@@ -113,12 +113,19 @@ class BareMetalComputeProvider(BaseComputeProvider):
         """Scan worker for running QEMU processes"""
         try:
             cmd = "ps aux | grep 'qemu-system-x86_64.*daemonize' | grep -v grep"
-            success, output = self.executor.execute_direct(worker_ip, cmd)
+            success, output = self.executor.execute_direct(worker_ip, cmd, timeout=10)
             
-            if not success or not output.strip():
+            if not success:
+                # If command fails, it might be because grep found nothing (exit code 1)
+                # That's OK, just means no VMs running
+                logger.debug(f"No QEMU processes found on {worker_ip}")
+                return []
+            
+            if not output or not output.strip():
                 return []
             
             return self._parse_qemu_processes(output)
+            
         except Exception as e:
             logger.error(f"Failed to get running VMs on {worker_ip}: {e}")
             return []
