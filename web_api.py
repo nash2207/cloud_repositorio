@@ -44,6 +44,7 @@ class LoginRequest(BaseModel):
 
 class CreateSliceRequest(BaseModel):
     name: str
+    availability_zone: str = "linux"  # Default to linux cluster
 
 class AddVMRequest(BaseModel):
     slice_id: int
@@ -133,6 +134,7 @@ async def api_get_slices(request: Request):
             slices.append({
                 "slice_id": slice_data.get("slice_id"),
                 "status": slice_data.get("status", "design"),
+                "availability_zone": slice_data.get("availability_zone", "linux"),
                 "vms": slice_data.get("vms", []),
                 "links": slice_data.get("links", []),
                 "vlan_pool_start": slice_data.get("vlan_pool_start"),
@@ -159,7 +161,11 @@ async def api_create_slice(slice_req: CreateSliceRequest, request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
-    success, result = orchestrator.create_slice(user, slice_req.name)
+    # Validate availability zone
+    if slice_req.availability_zone not in ["linux", "openstack"]:
+        raise HTTPException(status_code=400, detail="Invalid availability_zone. Choose 'linux' or 'openstack'")
+    
+    success, result = orchestrator.create_slice(user, slice_req.name, "custom", slice_req.availability_zone)
     if not success:
         raise HTTPException(status_code=400, detail=result)
     

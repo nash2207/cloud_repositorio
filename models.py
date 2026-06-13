@@ -138,10 +138,11 @@ class Network:
         return {"vlan_id": self.vlan_id, "cidr": self.cidr, "gateway_ip": self.gateway_ip, "dhcp_enabled": self.dhcp_enabled, "dhcp_range": self.dhcp_range, "status": self.status}
 
 class Slice:
-    def __init__(self, slice_id, owner, topology_type="custom"):
+    def __init__(self, slice_id, owner, topology_type="custom", availability_zone="linux"):
         self.slice_id = slice_id
         self.owner = owner
         self.topology_type = topology_type
+        self.availability_zone = availability_zone  # "linux" or "openstack"
         self.vlan_pool_start = 100 + (slice_id % 100) * 20
         self.vlan_pool_end = self.vlan_pool_start + 19
         self.vlan_pool_used = []
@@ -167,4 +168,4 @@ class Slice:
         self.networks.append(network)
     
     def to_dict(self):
-        return {"slice_id": self.slice_id, "owner": self.owner, "topology_type": self.topology_type, "vlan_pool_start": self.vlan_pool_start, "vlan_pool_end": self.vlan_pool_end, "vlan_pool_used": self.vlan_pool_used, "vms": [v.to_dict() for v in self.vms], "links": [l.to_dict() for l in self.links], "networks": [n.to_dict() for n in self.networks], "status": self.status}
+        return {"slice_id": self.slice_id, "owner": self.owner, "topology_type": self.topology_type, "availability_zone": self.availability_zone, "vlan_pool_start": self.vlan_pool_start, "vlan_pool_end": self.vlan_pool_end, "vlan_pool_used": self.vlan_pool_used, "vms": [v.to_dict() for v in self.vms], "links": [l.to_dict() for l in self.links], "networks": [n.to_dict() for n in self.networks], "status": self.status}

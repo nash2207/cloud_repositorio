@@ -1,4 +1,4 @@
-"""Remote Executor - SSH command execution with improved error handling"""
+"""Remote Executor - SSH command execution with improved error handling and multi-NIC support"""
 import subprocess
 import logging
 
@@ -6,15 +6,24 @@ logger = logging.getLogger(__name__)
 
 
 class RemoteExecutor:
-    """Execute commands on remote workers via SSH"""
+    """Execute commands on remote workers via SSH with multi-cluster support"""
     
     def __init__(self, remote_user="ubuntu"):
         self.remote_user = remote_user
+        self.bind_address = None  # Can be set dynamically based on cluster
     
-    def execute(self, remote_ip, script_path, args=None, timeout=30):
+    def set_bind_address(self, bind_address):
+        """Set bind address for multi-NIC SSH connections"""
+        self.bind_address = bind_address
+    
+    def execute(self, remote_ip, script_path, args=None, timeout=30, bind_address=None):
         """Execute a script on remote host"""
         try:
-            cmd = f"ssh {self.remote_user}@{remote_ip} 'bash -s"
+            # Use instance bind_address if not provided
+            ba = bind_address or self.bind_address
+            bind_opt = f"-b {ba}" if ba else ""
+            
+            cmd = f"ssh {bind_opt} {self.remote_user}@{remote_ip} 'bash -s"
             if args:
                 cmd += " " + " ".join(f"'{arg}'" for arg in args)
             cmd += "' < " + script_path
@@ -38,11 +47,15 @@ class RemoteExecutor:
             logger.error(f"Execute error on {remote_ip}: {e}")
             return False, str(e)
     
-    def execute_direct(self, remote_ip, command, timeout=30):
-        """Execute a command directly on remote host"""
+    def execute_direct(self, remote_ip, command, timeout=30, bind_address=None):
+        """Execute a command directly on remote host with optional bind address"""
         try:
+            # Use instance bind_address if not provided
+            ba = bind_address or self.bind_address
+            bind_opt = f"-b {ba}" if ba else ""
+            
             # Add BatchMode to avoid password prompts
-            ssh_cmd = f"ssh -o StrictHostKeyChecking=no -o BatchMode=yes {self.remote_user}@{remote_ip}"
+            ssh_cmd = f"ssh {bind_opt} -o StrictHostKeyChecking=no -o BatchMode=yes {self.remote_user}@{remote_ip}"
             full_cmd = f"{ssh_cmd} '{command}'"
             
             result = subprocess.run(

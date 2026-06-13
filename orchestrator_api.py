@@ -3,6 +3,7 @@ import logging
 import json
 from models import Slice, Link, Flavor, VM, Interface
 from providers.baremetal_provider import BareMetalComputeProvider
+from providers.openstack_provider import OpenStackComputeProvider
 from providers.ovs_network_provider import OVSNetworkProvider
 from topology_generator import TopologyGenerator
 
@@ -12,34 +13,90 @@ logger = logging.getLogger(__name__)
 class OrchestratorAPI:
     """
     Orchestrator with pluggable compute and network providers
-    Can be extended to support OpenStack or other backends
+    Supports multi-cluster deployment with availability zones (Linux + OpenStack)
     """
     
     def __init__(self, db, deployment_api, compute_provider=None, network_provider=None):
         self.db = db
         self.deployment_api = deployment_api
         
-        # Use provided providers or default to bare-metal
-        self.compute_provider = compute_provider or BareMetalComputeProvider(deployment_api.executor)
-        self.network_provider = network_provider or OVSNetworkProvider(deployment_api.executor)
+        # Multi-cluster configuration from database
+        self.clusters = db.data.get("clusters", {
+            "linux": {
+                "bind_address": "10.0.0.6",
+                "network_node": "10.0.0.1",
+                "workers": ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
+            },
+            "openstack": {
+                "bind_address": "10.0.1.6",
+                "headnode": "10.0.1.1",
+                "workers": ["10.0.1.2", "10.0.1.3", "10.0.1.4"]
+            }
+        })
         
-        self.round_robin_idx = 0
-        self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
+        # Initialize providers for each cluster
+        self.linux_executor = deployment_api.executor  # Reuse existing executor
+        self.linux_compute_provider = BareMetalComputeProvider(self.linux_executor)
+        self.linux_network_provider = OVSNetworkProvider(self.linux_executor)
+        
+        # OpenStack provider (STUB - will be completed in future)
+        self.openstack_compute_provider = OpenStackComputeProvider(
+            headnode_ip=self.clusters["openstack"]["headnode"]
+        )
+        
+        # Round-robin state per cluster
+        self.round_robin_idx = {"linux": 0, "openstack": 0}
     
-    def get_next_worker(self):
-        """Round-robin worker selection"""
-        worker = self.workers[self.round_robin_idx % len(self.workers)]
-        self.round_robin_idx += 1
+    def _get_cluster_config(self, availability_zone):
+        """Get cluster configuration for given AZ"""
+        return self.clusters.get(availability_zone, self.clusters["linux"])
+    
+    def _get_compute_provider(self, availability_zone):
+        """Get compute provider for given AZ"""
+        if availability_zone == "openstack":
+            return self.openstack_compute_provider
+        else:
+            return self.linux_compute_provider
+    
+    def _get_network_provider(self, availability_zone):
+        """Get network provider for given AZ"""
+        # Currently only Linux cluster uses OVS network provider
+        # OpenStack uses Neutron (handled within OpenStack provider)
+        return self.linux_network_provider
+    
+    def _set_bind_address(self, availability_zone):
+        """Set RemoteExecutor bind address for cluster"""
+        cluster_config = self._get_cluster_config(availability_zone)
+        bind_address = cluster_config.get("bind_address")
+        if bind_address and availability_zone == "linux":
+            self.linux_executor.set_bind_address(bind_address)
+    
+    def get_next_worker(self, availability_zone="linux"):
+        """Round-robin worker selection for given cluster"""
+        cluster_config = self._get_cluster_config(availability_zone)
+        workers = cluster_config.get("workers", [])
+        
+        if not workers:
+            logger.error(f"No workers defined for AZ: {availability_zone}")
+            return None
+        
+        idx = self.round_robin_idx.get(availability_zone, 0)
+        worker = workers[idx % len(workers)]
+        self.round_robin_idx[availability_zone] = idx + 1
         return worker
     
-    def create_slice(self, username, slice_name, topology_type="custom"):
+    def create_slice(self, username, slice_name, topology_type="custom", availability_zone="linux"):
         user = self.db.get_user(username)
         if not user:
             return False, "User not found"
         
+        # Validate availability zone
+        if availability_zone not in ["linux", "openstack"]:
+            return False, f"Invalid availability zone: {availability_zone}. Choose 'linux' or 'openstack'"
+        
         try:
             slice_id = self.db.get_next_vm_id()
-            slice_obj = Slice(slice_id, username, topology_type)
+            slice_obj = Slice(slice_id, username, topology_type, availability_zone)
             slice_obj.status = "design"
             
             self.db.add_slice(slice_obj.to_dict())
@@ -49,8 +106,8 @@ class OrchestratorAPI:
             user["slices"].append(slice_id)
             self.db.update_user(username, user)
             
-            logger.info(f"Slice {slice_id} created for {username} (VLAN pool: {slice_obj.vlan_pool_start}-{slice_obj.vlan_pool_end})")
-            return True, {"slice_id": slice_id, "name": slice_name}
+            logger.info(f"Slice {slice_id} created for {username} in AZ '{availability_zone}' (VLAN pool: {slice_obj.vlan_pool_start}-{slice_obj.vlan_pool_end})")
+            return True, {"slice_id": slice_id, "name": slice_name, "availability_zone": availability_zone}
         except Exception as e:
             logger.error(f"Slice creation error: {e}")
             return False, str(e)
@@ -74,7 +131,8 @@ class OrchestratorAPI:
         
         try:
             vm_id = self.db.get_next_vm_id()
-            worker_ip = self.get_next_worker()
+            availability_zone = slice_data.get("availability_zone", "linux")
+            worker_ip = self.get_next_worker(availability_zone)
             
             # Create VM with only management interface
             success, vm = self.deployment_api.create_vm_with_qcow(
@@ -91,7 +149,7 @@ class OrchestratorAPI:
             user["used_vms"] = user.get("used_vms", 0) + 1
             self.db.update_user(username, user)
             
-            logger.info(f"VM {vm_id} ({flavor_name}) added to slice {slice_id}")
+            logger.info(f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone})")
             return True, vm.to_dict()
         except Exception as e:
             logger.error(f"VM creation error: {e}")
@@ -169,7 +227,7 @@ class OrchestratorAPI:
             return False, str(e)
     
     def deploy_slice(self, username, slice_id):
-        """Deploy slice using pluggable providers"""
+        """Deploy slice using pluggable providers based on availability zone"""
         slice_data = self.db.get_slice(str(slice_id))
         
         if not slice_data or slice_data.get("owner") != username:
@@ -179,63 +237,87 @@ class OrchestratorAPI:
             return False, "Slice already deployed"
         
         try:
-            # 1. Configure VLAN 400 DHCP for internet access (gateway already exists)
-            has_internet = any(
-                any(iface.get("vlan_id") == 400 for iface in vm.get("interfaces", []))
-                for vm in slice_data.get("vms", [])
-            )
+            availability_zone = slice_data.get("availability_zone", "linux")
+            compute_provider = self._get_compute_provider(availability_zone)
+            network_provider = self._get_network_provider(availability_zone)
             
-            if has_internet:
-                logger.info("Configuring DHCP for VLAN 400 (gateway 10.60.7.1 already exists)")
-                self.network_provider.delete_network(400)  # Cleanup previous
-                success = self.network_provider.create_network(
-                    400, "10.60.7.0/24", "10.60.7.1", 
-                    dhcp_enabled=True, create_gateway=False
-                )
-                if not success:
-                    logger.error("Failed to configure DHCP for VLAN 400")
-                    return False, "Failed to configure DHCP for VLAN 400"
+            # Set bind address for SSH connections
+            self._set_bind_address(availability_zone)
             
-            # 2. Configure VLANs for each Link (L2 connections between VMs)
-            for link in slice_data.get("links", []):
-                vlan_id = link.get("vlan_id")
-                cidr = f"192.168.{vlan_id % 256}.0/24"
-                gateway_ip = f"192.168.{vlan_id % 256}.1"
-                
-                logger.info(f"Configuring VLAN {vlan_id} for Link {link.get('link_id')}")
-                success = self.network_provider.create_network(
-                    vlan_id, cidr, gateway_ip, dhcp_enabled=True
+            logger.info(f"Deploying slice {slice_id} to availability zone: {availability_zone}")
+            
+            # LINUX CLUSTER DEPLOYMENT
+            if availability_zone == "linux":
+                # 1. Configure VLAN 400 DHCP for internet access (gateway already exists)
+                has_internet = any(
+                    any(iface.get("vlan_id") == 400 for iface in vm.get("interfaces", []))
+                    for vm in slice_data.get("vms", [])
                 )
                 
-                if not success:
-                    logger.error(f"Failed to configure VLAN {vlan_id}")
-                    return False, f"Failed to configure VLAN {vlan_id}"
-            
-            # 3. Launch all VMs using compute provider
-            for vm_dict in slice_data.get("vms", []):
-                worker_ip = vm_dict.get("worker_ip")
-                logger.info(f"Deploying VM {vm_dict['vm_id']} on {worker_ip}")
+                if has_internet:
+                    logger.info("Configuring DHCP for VLAN 400 (gateway 10.60.7.1 already exists)")
+                    network_provider.delete_network(400)  # Cleanup previous
+                    success = network_provider.create_network(
+                        400, "10.60.7.0/24", "10.60.7.1", 
+                        dhcp_enabled=True, create_gateway=False
+                    )
+                    if not success:
+                        logger.error("Failed to configure DHCP for VLAN 400")
+                        return False, "Failed to configure DHCP for VLAN 400"
                 
-                success, pid = self.compute_provider.launch_vm(worker_ip, vm_dict)
-                if success:
-                    vm_dict["status"] = "deployed"
-                    vm_dict["pid"] = pid
-                    logger.info(f"VM {vm_dict['vm_id']} started with PID {pid}")
-                else:
-                    logger.error(f"Failed to start VM {vm_dict['vm_id']}")
-                    return False, f"Failed to start VM {vm_dict['vm_id']}"
+                # 2. Configure VLANs for each Link (L2 connections between VMs)
+                for link in slice_data.get("links", []):
+                    vlan_id = link.get("vlan_id")
+                    cidr = f"192.168.{vlan_id % 256}.0/24"
+                    gateway_ip = f"192.168.{vlan_id % 256}.1"
+                    
+                    logger.info(f"Configuring VLAN {vlan_id} for Link {link.get('link_id')}")
+                    success = network_provider.create_network(
+                        vlan_id, cidr, gateway_ip, dhcp_enabled=True
+                    )
+                    
+                    if not success:
+                        logger.error(f"Failed to configure VLAN {vlan_id}")
+                        return False, f"Failed to configure VLAN {vlan_id}"
+                
+                # 3. Launch all VMs using compute provider
+                for vm_dict in slice_data.get("vms", []):
+                    worker_ip = vm_dict.get("worker_ip")
+                    logger.info(f"Deploying VM {vm_dict['vm_id']} on {worker_ip}")
+                    
+                    success, pid = compute_provider.launch_vm(worker_ip, vm_dict)
+                    if success:
+                        vm_dict["status"] = "deployed"
+                        vm_dict["pid"] = pid
+                        logger.info(f"VM {vm_dict['vm_id']} started with PID {pid}")
+                    else:
+                        logger.error(f"Failed to start VM {vm_dict['vm_id']}")
+                        return False, f"Failed to start VM {vm_dict['vm_id']}"
+            
+            # OPENSTACK CLUSTER DEPLOYMENT (STUB)
+            elif availability_zone == "openstack":
+                logger.warning("OpenStack deployment - STUB NOT IMPLEMENTED YET")
+                logger.info("When implemented, will deploy via OpenStack APIs:")
+                logger.info(f"  - Keystone auth at {self.clusters['openstack']['headnode']}:5000")
+                logger.info(f"  - Nova instances at {self.clusters['openstack']['headnode']}:8774")
+                logger.info(f"  - Neutron networks at {self.clusters['openstack']['headnode']}:9696")
+                logger.info("  - See providers/openstack_provider.py for implementation")
+                return False, "OpenStack deployment not implemented yet. Use 'linux' availability zone for now."
+            
+            else:
+                return False, f"Unknown availability zone: {availability_zone}"
             
             slice_data["status"] = "deployed"
             self.db.update_slice(slice_id, slice_data)
             
-            logger.info(f"Slice {slice_id} deployed successfully")
-            return True, "Slice deployed successfully"
+            logger.info(f"Slice {slice_id} deployed successfully on {availability_zone} cluster")
+            return True, f"Slice deployed successfully on {availability_zone} cluster"
         except Exception as e:
             logger.error(f"Deploy error: {e}")
             return False, str(e)
     
     def delete_slice(self, username, slice_id):
-        """Delete slice using pluggable providers"""
+        """Delete slice using pluggable providers based on availability zone"""
         try:
             slice_data = self.db.get_slice(str(slice_id))
             if not slice_data or slice_data.get("owner") != username:
@@ -243,21 +325,34 @@ class OrchestratorAPI:
             
             user = self.db.get_user(username)
             vm_count = len(slice_data.get("vms", []))
+            availability_zone = slice_data.get("availability_zone", "linux")
+            
+            compute_provider = self._get_compute_provider(availability_zone)
+            network_provider = self._get_network_provider(availability_zone)
+            
+            # Set bind address for SSH connections
+            self._set_bind_address(availability_zone)
             
             # Stop VMs if deployed
             if slice_data.get("status") == "deployed":
-                for vm_dict in slice_data.get("vms", []):
-                    worker_ip = vm_dict.get("worker_ip")
-                    self.compute_provider.stop_vm(worker_ip, vm_dict)
+                if availability_zone == "linux":
+                    for vm_dict in slice_data.get("vms", []):
+                        worker_ip = vm_dict.get("worker_ip")
+                        compute_provider.stop_vm(worker_ip, vm_dict)
+                    
+                    # Cleanup VLANs on network node
+                    for link in slice_data.get("links", []):
+                        vlan_id = link.get("vlan_id")
+                        network_provider.delete_network(vlan_id)
                 
-                # Cleanup VLANs on network node
-                for link in slice_data.get("links", []):
-                    vlan_id = link.get("vlan_id")
-                    self.network_provider.delete_network(vlan_id)
+                elif availability_zone == "openstack":
+                    logger.warning("OpenStack cleanup - STUB NOT IMPLEMENTED")
+                    # TODO: Delete instances, ports, networks via OpenStack APIs
             
-            # Delete QCOW images
-            for vm_dict in slice_data.get("vms", []):
-                self.deployment_api.delete_vm_dict(vm_dict)
+            # Delete QCOW images (Linux cluster only)
+            if availability_zone == "linux":
+                for vm_dict in slice_data.get("vms", []):
+                    self.deployment_api.delete_vm_dict(vm_dict)
             
             self.db.delete_slice(slice_id)
             
@@ -266,7 +361,7 @@ class OrchestratorAPI:
             user["used_vms"] = max(0, user.get("used_vms", 0) - vm_count)
             self.db.update_user(username, user)
             
-            logger.info(f"Slice {slice_id} deleted")
+            logger.info(f"Slice {slice_id} deleted from {availability_zone} cluster")
             return True, "Slice deleted"
         except Exception as e:
             logger.error(f"Delete error: {e}")

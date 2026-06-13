@@ -108,6 +108,14 @@
                     <input type="text" id="sliceName" placeholder="my-network-slice" required pattern="[a-zA-Z0-9_-]+" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
                     <p class="text-xs text-gray-500 mt-1">Only alphanumeric, underscore, hyphen</p>
                 </div>
+                <div class="mb-4">
+                    <label class="block text-sm text-gray-400 mb-2">Availability Zone</label>
+                    <select id="sliceAvailabilityZone" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
+                        <option value="linux">🐧 Linux Cluster (Bare-Metal QEMU)</option>
+                        <option value="openstack" disabled>☁️ OpenStack Cluster (Coming Soon)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Linux: 10.0.0.x network | OpenStack: 10.0.1.x network</p>
+                </div>
                 <div class="flex gap-2">
                     <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded transition">Create</button>
                     <button type="button" onclick="closeModal('createSliceModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
@@ -286,7 +294,8 @@
             allSlices.forEach(s => {
                 const opt = document.createElement('option');
                 opt.value = s.slice_id;
-                opt.textContent = `Slice #${s.slice_id} (${s.status}) - ${s.vms.length} VMs`;
+                const azIcon = s.availability_zone === 'openstack' ? '☁️' : '🐧';
+                opt.textContent = `${azIcon} Slice #${s.slice_id} (${s.status}) - ${s.vms.length} VMs`;
                 if (currentSliceId === s.slice_id) opt.selected = true;
                 sel.appendChild(opt);
             });
@@ -323,7 +332,7 @@
             c.innerHTML = allSlices.map(s => `
                 <div class="slice-item ${currentSliceId === s.slice_id ? 'active' : ''} p-3 rounded border border-gray-700" onclick="selectSliceFromList(${s.slice_id})">
                     <div class="flex justify-between items-start mb-2">
-                        <div><p class="font-semibold">Slice #${s.slice_id}</p><p class="text-xs text-gray-400">VLAN ${s.vlan_pool_start}-${s.vlan_pool_end}</p></div>
+                        <div><p class="font-semibold">${s.availability_zone === 'openstack' ? '☁️' : '🐧'} Slice #${s.slice_id}</p><p class="text-xs text-gray-400">VLAN ${s.vlan_pool_start}-${s.vlan_pool_end}</p></div>
                         <span class="status-badge status-${s.status}">${s.status}</span>
                     </div>
                     <div class="flex gap-4 text-xs text-gray-400"><span>🖥️ ${s.vms.length} VMs</span><span>🔗 ${s.links.length} Links</span></div>
@@ -341,7 +350,9 @@
             document.getElementById('emptyState').style.display = 'none';
             document.getElementById('network').style.display = 'block';
             document.getElementById('sliceActions').classList.remove('hidden');
-            document.getElementById('topologyTitle').textContent = `Slice #${sliceId}`;
+            const azIcon = currentSliceData.availability_zone === 'openstack' ? '☁️' : '🐧';
+            const azName = currentSliceData.availability_zone === 'openstack' ? 'OpenStack' : 'Linux';
+            document.getElementById('topologyTitle').textContent = `${azIcon} Slice #${sliceId} (${azName})`;
             document.getElementById('topologySubtitle').textContent = `${currentSliceData.vms.length} VMs, ${currentSliceData.links.length} Links - ${currentSliceData.status}`;
             updateActiveSliceSelector();
             await loadSlices();
@@ -474,9 +485,21 @@
         async function createSlice(e) {
             e.preventDefault();
             const nameInput = document.getElementById('sliceName');
+            const azInput = document.getElementById('sliceAvailabilityZone');
             try {
-                const result = await apiCall('/api/slices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nameInput.value }) });
-                closeModal('createSliceModal'); await loadSlices(); await loadQuotas(); nameInput.value = '';
+                const result = await apiCall('/api/slices', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        name: nameInput.value,
+                        availability_zone: azInput.value 
+                    }) 
+                });
+                closeModal('createSliceModal'); 
+                await loadSlices(); 
+                await loadQuotas(); 
+                nameInput.value = '';
+                azInput.value = 'linux';
                 if (result.slice_id) await viewSlice(result.slice_id);
             } catch (err) { alert('Error: ' + err.message); }
         }

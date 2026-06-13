@@ -65,7 +65,7 @@ class SyncManager:
             logger.warning(f"Orphaned VM detected: {vm_name} (PID: {pid}) on {worker_ip}")
     
     def cleanup_orphaned_vms(self):
-        """Kill all VMs not registered in database"""
+        """Kill all VMs not registered in database and update user quotas"""
         logger.info("Cleaning up orphaned VMs...")
         
         orphaned_count = 0
@@ -111,7 +111,30 @@ class SyncManager:
             except Exception as e:
                 logger.error(f"Error processing worker {worker_ip}: {e}")
         
+        # Recalculate user VM counts from actual slices
+        self._recalculate_user_quotas()
+        
         if orphaned_count > 0:
             logger.info(f"Orphaned VM cleanup completed: {orphaned_count} VMs killed")
         else:
             logger.info("Orphaned VM cleanup completed: No orphaned VMs found")
+    
+    def _recalculate_user_quotas(self):
+        """Recalculate used_vms for all users based on actual slices"""
+        logger.info("Recalculating user VM quotas...")
+        
+        for username, user_data in self.db.data.get("users", {}).items():
+            slice_ids = user_data.get("slices", [])
+            total_vms = 0
+            
+            for slice_id in slice_ids:
+                slice_data = self.db.get_slice(slice_id)
+                if slice_data:
+                    total_vms += len(slice_data.get("vms", []))
+            
+            if user_data.get("used_vms", 0) != total_vms:
+                logger.info(f"Updating {username}: used_vms {user_data.get('used_vms', 0)} -> {total_vms}")
+                user_data["used_vms"] = total_vms
+                self.db.update_user(username, user_data)
+        
+        logger.info("User quota recalculation completed")
