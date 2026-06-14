@@ -3,7 +3,14 @@ clusters:
   linux:
     bind_address: "10.0.0.6"  # ens4 interface on app node
     network_node: "10.0.0.1"
-    workers: ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    switch_node: "10.0.0.7"  # OVS central switch
+    workers: ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    # Worker to switch port mapping (for trunk VLAN management)
+    worker_to_switch_port:
+      "10.0.0.1": "ens4"
+      "10.0.0.2": "ens5"
+      "10.0.0.3": "ens6"
+      "10.0.0.4": "ens7"
   openstack:
     bind_address: "10.0.1.6"  # ens5 interface on app node
     headnode: "10.0.1.1"  # OpenStack API endpoint (Keystone, Nova, Neutron, Glance)
@@ -17,19 +24,12 @@ users:
     username: admin
     password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
     role: admin
-    quota_vms: 10
-    used_vms: 0
-    slices: []
-  student:
-    username: student
-    password_hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
-    role: student
-    quota_vms: 6
+    quota_vms: 100
     used_vms: 0
     slices: []
 
 workers:
-  # Linux cluster workers
+  # Linux cluster workers (10.0.0.1 is network node + worker)
   10.0.0.1:
     max_vms: 10
     max_ram_gb: 1
