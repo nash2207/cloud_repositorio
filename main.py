@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 # Global state
 db = Database()
-workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
+clusters = db.data.get("clusters", {})
+workers = clusters.get("linux", {}).get("workers", ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"])
+network_node = clusters.get("linux", {}).get("network_node", "10.0.0.1")
 current_slice = {"id": None, "user": None, "orchestrator": None}
 db_path = "database.yaml"
 db_backup = "database.yaml.backup"
@@ -44,7 +46,6 @@ def cleanup_workers():
 
 def cleanup_network_node():
     """Cleanup all DHCP namespaces and VLANs on network node"""
-    network_node = "10.0.10.3"
     cleanup_cmd = """
     for ns in $(ip netns list | grep 'ns-dhcp-vlan' | awk '{print $1}'); do
         sudo ip netns exec $ns pkill dnsmasq 2>/dev/null || true
@@ -54,10 +55,13 @@ def cleanup_network_node():
         sudo ovs-vsctl del-port br-int $port 2>/dev/null || true
     done
     """
-    subprocess.run(
-        f"ssh -o BatchMode=yes ubuntu@{network_node} '{cleanup_cmd}'",
-        shell=True, timeout=10, capture_output=True
-    )
+    try:
+        subprocess.run(
+            f"ssh -o BatchMode=yes ubuntu@{network_node} '{cleanup_cmd}'",
+            shell=True, timeout=10, capture_output=True
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Cleanup timeout on {network_node} - continuing anyway")
 
 
 def cleanup_local():
@@ -76,6 +80,15 @@ def signal_handler(sig, frame):
             )
         except:
             pass
+    
+    # Stop all websockify proxies
+    try:
+        from vnc_proxy import vnc_proxy_manager
+        vnc_proxy_manager.stop_all()
+        logger.info("Stopped all VNC proxies")
+    except:
+        pass
+    
     cleanup_workers()
     cleanup_network_node()
     cleanup_local()

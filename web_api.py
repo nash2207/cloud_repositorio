@@ -13,6 +13,7 @@ from remote_executor import RemoteExecutor
 from deployment_api import DeploymentAPI
 from orchestrator_api import OrchestratorAPI
 from sync_manager import SyncManager
+from vnc_proxy import vnc_proxy_manager
 
 # Initialize FastAPI
 app = FastAPI(title="Slice Manager API")
@@ -344,12 +345,19 @@ async def api_get_vm_console(vm_id: int, request: Request):
     if not vnc_port or not worker_ip:
         raise HTTPException(status_code=400, detail="VM VNC information not available")
     
-    # Return noVNC URL (assumes noVNC served at /novnc/)
-    # Format: http://APP_IP:8080/novnc/vnc.html?host=WORKER_IP&port=VNC_PORT
+    # Get or create websockify proxy
+    proxy_port = vnc_proxy_manager.get_proxy_port(worker_ip, vnc_port)
+    
+    if not proxy_port:
+        raise HTTPException(status_code=500, detail="Failed to create VNC proxy")
+    
+    # Return noVNC URL pointing to websockify proxy
+    # Format: http://localhost:8080/novnc/vnc.html?host=localhost&port=PROXY_PORT
     return {
         "vm_id": vm_id,
         "vm_name": vm_found.get("name"),
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
-        "console_url": f"/novnc/vnc.html?host={worker_ip}&port={vnc_port}&autoconnect=true&resize=scale"
+        "proxy_port": proxy_port,
+        "console_url": f"/novnc/vnc.html?host=localhost&port={proxy_port}&autoconnect=true&resize=scale"
     }
