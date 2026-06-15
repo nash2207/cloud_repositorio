@@ -396,7 +396,7 @@
             network.on('click', (params) => { 
                 if (params.nodes.length > 0) {
                     if (linkMode) handleNodeClickForLink(params.nodes[0]);
-                    else if (currentSliceData.status === 'design') openEditVMModal(params.nodes[0]);
+                    else openEditVMModal(params.nodes[0]);  // Always open modal to see VM details
                 }
             });
         }
