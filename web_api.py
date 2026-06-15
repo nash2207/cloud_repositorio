@@ -1,5 +1,5 @@
 """FastAPI Web Interface for Slice Manager"""
-from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi import FastAPI, Request, HTTPException, Response, WebSocket
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import hashlib
 import uvicorn
 import os
+import asyncio
 
 from database import Database
 from remote_executor import RemoteExecutor
@@ -310,6 +311,43 @@ async def api_import_slice(request: Request):
     
     return result
 
+@app.websocket("/vnc_ws/{proxy_port}")
+async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
+    """WebSocket proxy to websockify"""
+    await websocket.accept()
+    
+    # Connect to websockify
+    import websockets
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        async with websockets.connect(f"ws://localhost:{proxy_port}") as ws:
+            # Bidirectional relay
+            async def relay_client_to_server():
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await ws.send(data)
+                except:
+                    pass
+            
+            async def relay_server_to_client():
+                try:
+                    async for message in ws:
+                        await websocket.send_bytes(message)
+                except:
+                    pass
+            
+            await asyncio.gather(
+                relay_client_to_server(),
+                relay_server_to_client()
+            )
+    except Exception as e:
+        logger.error(f"WebSocket proxy error: {e}")
+    finally:
+        await websocket.close()
+
 @app.get("/api/vms/{vm_id}/console")
 async def api_get_vm_console(vm_id: int, request: Request):
     """Get noVNC console URL for VM"""
@@ -364,9 +402,11 @@ async def api_get_vm_console(vm_id: int, request: Request):
     
     logger.info(f"Proxy created: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
     
-    # Return noVNC URL pointing to websockify proxy
-    # Format: http://localhost:8080/novnc/vnc.html?host=localhost&port=PROXY_PORT
-    console_url = f"/novnc/vnc.html?host=localhost&port={proxy_port}&autoconnect=true&resize=scale"
+    # Get the host from request
+    app_host = request.headers.get("host", "localhost:8080").split(":")[0]
+    
+    # Return noVNC URL using our WebSocket proxy
+    console_url = f"/novnc/vnc.html?path=vnc_ws/{proxy_port}&autoconnect=true&resize=scale"
     
     logger.info(f"Returning console URL: {console_url}")
     
@@ -376,5 +416,6 @@ async def api_get_vm_console(vm_id: int, request: Request):
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
+        "app_host": app_host,
         "console_url": console_url
     }
