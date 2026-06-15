@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import hashlib
 import uvicorn
+import os
 
 from database import Database
 from remote_executor import RemoteExecutor
@@ -16,6 +17,10 @@ from sync_manager import SyncManager
 # Initialize FastAPI
 app = FastAPI(title="Slice Manager API")
 templates = Jinja2Templates(directory="templates")
+
+# Mount noVNC static files if directory exists
+if os.path.exists("static/novnc"):
+    app.mount("/novnc", StaticFiles(directory="static/novnc"), name="novnc")
 
 # Initialize backend components
 db = Database()
@@ -303,3 +308,48 @@ async def api_import_slice(request: Request):
         raise HTTPException(status_code=400, detail=result)
     
     return result
+
+@app.get("/api/vms/{vm_id}/console")
+async def api_get_vm_console(vm_id: int, request: Request):
+    """Get noVNC console URL for VM"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Find VM in user's slices
+    user_data = db.get_user(user)
+    slice_ids = user_data.get("slices", [])
+    
+    vm_found = None
+    for slice_id in slice_ids:
+        slice_data = db.get_slice(slice_id)
+        if slice_data:
+            for vm in slice_data.get("vms", []):
+                if vm["vm_id"] == vm_id:
+                    vm_found = vm
+                    break
+        if vm_found:
+            break
+    
+    if not vm_found:
+        raise HTTPException(status_code=404, detail="VM not found or not authorized")
+    
+    # Check if VM is deployed
+    if vm_found.get("status") != "deployed":
+        raise HTTPException(status_code=400, detail="VM is not deployed")
+    
+    vnc_port = vm_found.get("vnc_port")
+    worker_ip = vm_found.get("worker_ip")
+    
+    if not vnc_port or not worker_ip:
+        raise HTTPException(status_code=400, detail="VM VNC information not available")
+    
+    # Return noVNC URL (assumes noVNC served at /novnc/)
+    # Format: http://APP_IP:8080/novnc/vnc.html?host=WORKER_IP&port=VNC_PORT
+    return {
+        "vm_id": vm_id,
+        "vm_name": vm_found.get("name"),
+        "vnc_port": vnc_port,
+        "worker_ip": worker_ip,
+        "console_url": f"/novnc/vnc.html?host={worker_ip}&port={vnc_port}&autoconnect=true&resize=scale"
+    }

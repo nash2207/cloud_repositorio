@@ -156,8 +156,7 @@
 
     <div id="editVMModal" class="modal">
         <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl">
-            <h2 class="text-xl font-bold mb-4">Edit VM</h2>
-            <p class="text-xs text-yellow-400 mb-4">⚠️ Only available in design state</p>
+            <h2 class="text-xl font-bold mb-4">VM Details</h2>
             <form onsubmit="updateVM(event)">
                 <input type="hidden" id="editVMId">
                 <div class="mb-3">
@@ -171,16 +170,34 @@
                         <option value="ubuntu">Ubuntu (512MB RAM, 2.2GB disk)</option>
                     </select>
                 </div>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">Status</label>
+                    <span id="editVMStatus" class="text-sm font-semibold"></span>
+                </div>
+                <div class="mb-3">
+                    <label class="block text-sm text-gray-400 mb-2">Worker</label>
+                    <span id="editVMWorker" class="text-sm text-gray-300"></span>
+                </div>
                 <div class="mb-4">
+                    <label class="block text-sm text-gray-400 mb-2">VNC Port</label>
+                    <span id="editVMVNC" class="text-sm text-gray-300"></span>
+                </div>
+                <div class="mb-4" id="editVMInternetBlock">
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" id="editVMInternet" class="w-4 h-4">
-                        <span class="text-sm">Enable Internet (VLAN 400)</span>
+                        <span class="text-sm">Enable Internet (VLAN 100)</span>
                     </label>
+                    <p class="text-xs text-yellow-400 mt-1">⚠️ Only editable in design state</p>
                 </div>
                 <div class="flex gap-2">
-                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded transition">Update</button>
-                    <button type="button" onclick="closeModal('editVMModal')" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
+                    <button type="button" onclick="openVMConsole()" id="consoleBtn" class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        🖥️ Console
+                    </button>
+                    <button type="submit" id="updateVMBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        Update
+                    </button>
                 </div>
+                <button type="button" onclick="closeModal('editVMModal')" class="w-full mt-2 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Close</button>
             </form>
         </div>
     </div>
@@ -412,11 +429,40 @@
         function openEditVMModal(vmId) {
             const vm = currentSliceData.vms.find(v => v.vm_id === vmId);
             if (!vm) return;
+            
+            const isDesign = currentSliceData.status === 'design';
+            const isDeployed = vm.status === 'deployed';
+            
             document.getElementById('editVMId').value = vmId;
             document.getElementById('editVMName').value = vm.name;
+            document.getElementById('editVMName').disabled = !isDesign;
             document.getElementById('editVMFlavor').value = vm.flavor;
-            document.getElementById('editVMInternet').checked = vm.interfaces.some(iface => iface.vlan_id === 400);
+            document.getElementById('editVMFlavor').disabled = !isDesign;
+            document.getElementById('editVMStatus').textContent = vm.status || 'design';
+            document.getElementById('editVMStatus').className = `status-badge status-${vm.status || 'design'}`;
+            document.getElementById('editVMWorker').textContent = vm.worker_ip || 'Not assigned';
+            document.getElementById('editVMVNC').textContent = vm.vnc_port ? `${vm.vnc_port}` : 'Not assigned';
+            document.getElementById('editVMInternet').checked = vm.interfaces.some(iface => iface.vlan_id === 100);
+            document.getElementById('editVMInternet').disabled = !isDesign;
+            document.getElementById('updateVMBtn').disabled = !isDesign;
+            
+            // Enable console button only if VM is deployed
+            document.getElementById('consoleBtn').disabled = !isDeployed;
+            
             openModal('editVMModal');
+        }
+        
+        async function openVMConsole() {
+            const vmId = parseInt(document.getElementById('editVMId').value);
+            if (!vmId) return;
+            
+            try {
+                const consoleData = await apiCall(`/api/vms/${vmId}/console`);
+                // Open noVNC in new tab
+                window.open(consoleData.console_url, '_blank', 'width=1024,height=768');
+            } catch (err) {
+                alert('Error opening console: ' + err.message);
+            }
         }
 
         function startLinkMode() {
