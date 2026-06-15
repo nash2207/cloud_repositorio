@@ -313,9 +313,14 @@ async def api_import_slice(request: Request):
 @app.get("/api/vms/{vm_id}/console")
 async def api_get_vm_console(vm_id: int, request: Request):
     """Get noVNC console URL for VM"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     user = verify_session(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    logger.info(f"Console request for VM {vm_id} by user {user}")
     
     # Find VM in user's slices
     user_data = db.get_user(user)
@@ -333,31 +338,43 @@ async def api_get_vm_console(vm_id: int, request: Request):
             break
     
     if not vm_found:
+        logger.error(f"VM {vm_id} not found")
         raise HTTPException(status_code=404, detail="VM not found or not authorized")
     
     # Check if VM is deployed
     if vm_found.get("status") != "deployed":
+        logger.error(f"VM {vm_id} not deployed, status: {vm_found.get('status')}")
         raise HTTPException(status_code=400, detail="VM is not deployed")
     
     vnc_port = vm_found.get("vnc_port")
     worker_ip = vm_found.get("worker_ip")
     
+    logger.info(f"VM {vm_id} details: worker={worker_ip}, vnc_port={vnc_port}")
+    
     if not vnc_port or not worker_ip:
         raise HTTPException(status_code=400, detail="VM VNC information not available")
     
     # Get or create websockify proxy
+    logger.info(f"Requesting proxy for {worker_ip}:{vnc_port}")
     proxy_port = vnc_proxy_manager.get_proxy_port(worker_ip, vnc_port)
     
     if not proxy_port:
+        logger.error(f"Failed to create proxy for {worker_ip}:{vnc_port}")
         raise HTTPException(status_code=500, detail="Failed to create VNC proxy")
+    
+    logger.info(f"Proxy created: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
     
     # Return noVNC URL pointing to websockify proxy
     # Format: http://localhost:8080/novnc/vnc.html?host=localhost&port=PROXY_PORT
+    console_url = f"/novnc/vnc.html?host=localhost&port={proxy_port}&autoconnect=true&resize=scale"
+    
+    logger.info(f"Returning console URL: {console_url}")
+    
     return {
         "vm_id": vm_id,
         "vm_name": vm_found.get("name"),
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
-        "console_url": f"/novnc/vnc.html?host=localhost&port={proxy_port}&autoconnect=true&resize=scale"
+        "console_url": console_url
     }
