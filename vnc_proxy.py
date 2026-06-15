@@ -66,10 +66,11 @@ class VNCProxyManager:
                 logger.error(f"noVNC directory not found: {novnc_dir}")
                 return False
             
+            # Listen on 0.0.0.0 so browsers can connect from anywhere
             cmd = [
                 "websockify",
-                "--web", novnc_dir,  # Use absolute path
-                str(proxy_port),
+                "--web", novnc_dir,
+                f"0.0.0.0:{proxy_port}",  # Changed from just port to 0.0.0.0:port
                 f"{target_host}:{target_port}"
             ]
             
@@ -94,7 +95,7 @@ class VNCProxyManager:
                 return False
             
             self.processes[proxy_port] = process
-            logger.info(f"websockify started with PID {process.pid}")
+            logger.info(f"websockify started with PID {process.pid} on 0.0.0.0:{proxy_port}")
             return True
             
         except Exception as e:
