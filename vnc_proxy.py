@@ -57,22 +57,44 @@ class VNCProxyManager:
     def _start_websockify(self, proxy_port, target_host, target_port):
         """Start websockify process"""
         try:
+            # Get absolute path to novnc directory
+            import os
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            novnc_dir = os.path.join(base_dir, "static", "novnc")
+            
+            if not os.path.exists(novnc_dir):
+                logger.error(f"noVNC directory not found: {novnc_dir}")
+                return False
+            
             cmd = [
                 "websockify",
-                "--web", "static/novnc",  # Serve noVNC files
-                f"{proxy_port}",
+                "--web", novnc_dir,  # Use absolute path
+                str(proxy_port),
                 f"{target_host}:{target_port}"
             ]
             
-            # Start in background
+            logger.info(f"Starting websockify: {' '.join(cmd)}")
+            
+            # Start in background with output redirected to log
+            log_file = open(f"/tmp/websockify_{proxy_port}.log", "w")
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=os.setsid  # Create new process group
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True  # Detach from parent
             )
             
+            # Give it a moment to start
+            import time
+            time.sleep(0.5)
+            
+            # Check if it's still running
+            if process.poll() is not None:
+                logger.error(f"websockify failed to start, check /tmp/websockify_{proxy_port}.log")
+                return False
+            
             self.processes[proxy_port] = process
+            logger.info(f"websockify started with PID {process.pid}")
             return True
             
         except Exception as e:
@@ -84,7 +106,8 @@ class VNCProxyManager:
         if proxy_port in self.processes:
             try:
                 process = self.processes[proxy_port]
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.terminate()
+                process.wait(timeout=5)
                 del self.processes[proxy_port]
                 logger.info(f"Stopped websockify on port {proxy_port}")
             except Exception as e:
