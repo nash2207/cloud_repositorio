@@ -1,6 +1,6 @@
 """FastAPI Web Interface for Slice Manager"""
 from fastapi import FastAPI, Request, HTTPException, Response, WebSocket
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ import hashlib
 import uvicorn
 import os
 import asyncio
+from pathlib import Path
 
 from database import Database
 from remote_executor import RemoteExecutor
@@ -33,7 +34,7 @@ sessions = {}
 # ============= WebSocket Endpoint (BEFORE static mount) =============
 @app.websocket("/vnc_ws/{proxy_port}")
 async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
-    """WebSocket proxy to websockify"""
+    """WebSocket proxy to websockify - allows VNC through same port as web app"""
     import websockets
     import logging
     logger = logging.getLogger(__name__)
@@ -42,10 +43,11 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
     logger.info(f"WebSocket connection accepted for proxy port {proxy_port}")
     
     try:
+        # Connect to local websockify
         async with websockets.connect(f"ws://localhost:{proxy_port}") as ws:
             logger.info(f"Connected to websockify at localhost:{proxy_port}")
             
-            # Bidirectional relay
+            # Bidirectional relay between browser and websockify
             async def relay_client_to_server():
                 try:
                     while True:
@@ -57,7 +59,10 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
             async def relay_server_to_client():
                 try:
                     async for message in ws:
-                        await websocket.send_bytes(message)
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
                 except Exception as e:
                     logger.debug(f"Server relay ended: {e}")
             
@@ -72,9 +77,18 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
         await websocket.close()
         logger.info(f"WebSocket closed for proxy port {proxy_port}")
 
-# Mount noVNC static files AFTER WebSocket routes
-if os.path.exists("static/novnc"):
-    app.mount("/novnc", StaticFiles(directory="static/novnc"), name="novnc")
+# ============= Static Files (AFTER WebSocket routes) =============
+# Serve noVNC files manually to avoid WebSocket capture
+@app.get("/novnc/{file_path:path}")
+async def serve_novnc(file_path: str):
+    """Serve noVNC static files"""
+    novnc_dir = Path("static/novnc")
+    file_full_path = novnc_dir / file_path
+    
+    if file_full_path.exists() and file_full_path.is_file():
+        return FileResponse(file_full_path)
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
 
 # ============= Authentication =============
 def hash_password(pwd):
@@ -407,13 +421,9 @@ async def api_get_vm_console(vm_id: int, request: Request):
     
     logger.info(f"Proxy created: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
     
-    # Get the app host from request headers
-    app_host = request.headers.get("host", "localhost:8080")
-    host_only = app_host.split(":")[0]
-    
-    # Return noVNC URL connecting directly to websockify
-    # noVNC will connect to ws://HOST:PROXY_PORT
-    console_url = f"/novnc/vnc.html?host={host_only}&port={proxy_port}&autoconnect=true&resize=scale"
+    # Return noVNC URL using WebSocket proxy through FastAPI
+    # This way everything goes through port 8080 (works with SSH tunnel)
+    console_url = f"/novnc/vnc.html?path=vnc_ws/{proxy_port}&autoconnect=true&resize=scale"
     
     logger.info(f"Returning console URL: {console_url}")
     
@@ -423,6 +433,5 @@ async def api_get_vm_console(vm_id: int, request: Request):
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
-        "app_host": host_only,
         "console_url": console_url
     }
