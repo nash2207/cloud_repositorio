@@ -20,10 +20,6 @@ from vnc_proxy import vnc_proxy_manager
 app = FastAPI(title="Slice Manager API")
 templates = Jinja2Templates(directory="templates")
 
-# Mount noVNC static files if directory exists
-if os.path.exists("static/novnc"):
-    app.mount("/novnc", StaticFiles(directory="static/novnc"), name="novnc")
-
 # Initialize backend components
 db = Database()
 executor = RemoteExecutor()
@@ -33,6 +29,52 @@ sync_manager = SyncManager(db, executor)
 
 # Simple session storage (in production use Redis/JWT)
 sessions = {}
+
+# ============= WebSocket Endpoint (BEFORE static mount) =============
+@app.websocket("/vnc_ws/{proxy_port}")
+async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
+    """WebSocket proxy to websockify"""
+    import websockets
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    await websocket.accept()
+    logger.info(f"WebSocket connection accepted for proxy port {proxy_port}")
+    
+    try:
+        async with websockets.connect(f"ws://localhost:{proxy_port}") as ws:
+            logger.info(f"Connected to websockify at localhost:{proxy_port}")
+            
+            # Bidirectional relay
+            async def relay_client_to_server():
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await ws.send(data)
+                except Exception as e:
+                    logger.debug(f"Client relay ended: {e}")
+            
+            async def relay_server_to_client():
+                try:
+                    async for message in ws:
+                        await websocket.send_bytes(message)
+                except Exception as e:
+                    logger.debug(f"Server relay ended: {e}")
+            
+            await asyncio.gather(
+                relay_client_to_server(),
+                relay_server_to_client(),
+                return_exceptions=True
+            )
+    except Exception as e:
+        logger.error(f"WebSocket proxy error: {e}")
+    finally:
+        await websocket.close()
+        logger.info(f"WebSocket closed for proxy port {proxy_port}")
+
+# Mount noVNC static files AFTER WebSocket routes
+if os.path.exists("static/novnc"):
+    app.mount("/novnc", StaticFiles(directory="static/novnc"), name="novnc")
 
 # ============= Authentication =============
 def hash_password(pwd):
@@ -310,43 +352,6 @@ async def api_import_slice(request: Request):
         raise HTTPException(status_code=400, detail=result)
     
     return result
-
-@app.websocket("/vnc_ws/{proxy_port}")
-async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
-    """WebSocket proxy to websockify"""
-    await websocket.accept()
-    
-    # Connect to websockify
-    import websockets
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    try:
-        async with websockets.connect(f"ws://localhost:{proxy_port}") as ws:
-            # Bidirectional relay
-            async def relay_client_to_server():
-                try:
-                    while True:
-                        data = await websocket.receive_bytes()
-                        await ws.send(data)
-                except:
-                    pass
-            
-            async def relay_server_to_client():
-                try:
-                    async for message in ws:
-                        await websocket.send_bytes(message)
-                except:
-                    pass
-            
-            await asyncio.gather(
-                relay_client_to_server(),
-                relay_server_to_client()
-            )
-    except Exception as e:
-        logger.error(f"WebSocket proxy error: {e}")
-    finally:
-        await websocket.close()
 
 @app.get("/api/vms/{vm_id}/console")
 async def api_get_vm_console(vm_id: int, request: Request):
