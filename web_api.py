@@ -407,11 +407,13 @@ async def api_get_vm_console(vm_id: int, request: Request):
     
     logger.info(f"Proxy created: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
     
-    # Get the host from request
-    app_host = request.headers.get("host", "localhost:8080").split(":")[0]
+    # Get the app host from request headers
+    app_host = request.headers.get("host", "localhost:8080")
+    host_only = app_host.split(":")[0]
     
-    # Return noVNC URL using our WebSocket proxy
-    console_url = f"/novnc/vnc.html?path=vnc_ws/{proxy_port}&autoconnect=true&resize=scale"
+    # Return noVNC URL connecting directly to websockify
+    # noVNC will connect to ws://HOST:PROXY_PORT
+    console_url = f"/novnc/vnc.html?host={host_only}&port={proxy_port}&autoconnect=true&resize=scale"
     
     logger.info(f"Returning console URL: {console_url}")
     
@@ -421,6 +423,6 @@ async def api_get_vm_console(vm_id: int, request: Request):
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
-        "app_host": app_host,
+        "app_host": host_only,
         "console_url": console_url
     }
