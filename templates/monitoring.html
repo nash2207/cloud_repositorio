@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoring Dashboard - Slice Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        .metric-card {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: all 0.2s;
+        }
+        .metric-card:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #3b82f6;
+        }
+        .metric-label {
+            font-size: 0.875rem;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .worker-status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .worker-status.active { background: #10b981; }
+        .worker-status.warning { background: #f59e0b; }
+        .worker-status.critical { background: #ef4444; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold">📊 Monitoring Dashboard</h1>
+                <p class="text-sm text-gray-400">Real-time cluster resource monitoring</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="text-right">
+                    <p class="text-sm text-gray-400">Admin</p>
+                    <p class="font-semibold" id="username">{{ username }}</p>
+                </div>
+                <a href="/dashboard" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition">← Back to Dashboard</a>
+                <button onclick="logout()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded transition">Logout</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="p-6 space-y-6">
+        <!-- Cluster Selector -->
+        <div class="flex gap-4">
+            <button onclick="selectCluster('linux')" id="btnLinux" class="flex-1 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition">
+                🖥️ Linux Cluster
+            </button>
+            <button onclick="selectCluster('openstack')" id="btnOpenstack" class="flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition">
+                ☁️ OpenStack Cluster
+            </button>
+        </div>
+
+        <!-- Cluster Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="metric-card">
+                <div class="metric-label">Total Workers</div>
+                <div class="metric-value" id="totalWorkers">-</div>
+                <div class="text-xs text-gray-500 mt-2">Active nodes in cluster</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Total VMs</div>
+                <div class="metric-value" id="totalVMs">-</div>
+                <div class="text-xs text-gray-500 mt-2">Running virtual machines</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">CPU Usage (μ)</div>
+                <div class="metric-value" id="totalCPU">-</div>
+                <div class="text-xs text-gray-500 mt-2">Mean utilization</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">RAM Usage (μ)</div>
+                <div class="metric-value" id="totalRAM">-</div>
+                <div class="text-xs text-gray-500 mt-2">Mean allocation (MB)</div>
+            </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- CPU Chart -->
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <h3 class="text-lg font-semibold mb-4">CPU Utilization by Worker (μ ± σ)</h3>
+                <div class="chart-container">
+                    <canvas id="cpuChart"></canvas>
+                </div>
+            </div>
+
+            <!-- RAM Chart -->
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <h3 class="text-lg font-semibold mb-4">RAM Allocation by Worker (μ ± σ)</h3>
+                <div class="chart-container">
+                    <canvas id="ramChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 2 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Disk Chart -->
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <h3 class="text-lg font-semibold mb-4">Disk Allocation by Worker</h3>
+                <div class="chart-container">
+                    <canvas id="diskChart"></canvas>
+                </div>
+            </div>
+
+            <!-- VM Distribution -->
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <h3 class="text-lg font-semibold mb-4">VM Distribution</h3>
+                <div class="chart-container">
+                    <canvas id="vmDistChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workers Detail Table -->
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Workers Detail</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Status</th>
+                            <th class="px-4 py-3 text-left">Worker IP</th>
+                            <th class="px-4 py-3 text-right">VMs</th>
+                            <th class="px-4 py-3 text-right">CPU μ ± σ</th>
+                            <th class="px-4 py-3 text-right">RAM μ ± σ (MB)</th>
+                            <th class="px-4 py-3 text-right">Disk (GB)</th>
+                            <th class="px-4 py-3 text-right">Capacity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workersTable" class="divide-y divide-gray-700">
+                        <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentCluster = 'linux';
+        let refreshInterval = null;
+        let charts = {};
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            selectCluster('linux');
+        });
+
+        function initCharts() {
+            const chartConfig = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, labels: { color: '#fff' } }
+                },
+                scales: {
+                    y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+                    x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+                }
+            };
+
+            // CPU Chart
+            charts.cpu = new Chart(document.getElementById('cpuChart'), {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'CPU μ (mean)',
+                        data: [],
+                        backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                        borderColor: 'rgb(59, 130, 246)',
+                        borderWidth: 1
+                    }]
+                },
+                options: { ...chartConfig, scales: { ...chartConfig.scales, y: { ...chartConfig.scales.y, beginAtZero: true, max: 100 } } }
+            });
+
+            // RAM Chart
+            charts.ram = new Chart(document.getElementById('ramChart'), {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'RAM μ (MB)',
+                        data: [],
+                        backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                        borderColor: 'rgb(16, 185, 129)',
+                        borderWidth: 1
+                    }]
+                },
+                options: { ...chartConfig, scales: { ...chartConfig.scales, y: { ...chartConfig.scales.y, beginAtZero: true } } }
+            });
+
+            // Disk Chart
+            charts.disk = new Chart(document.getElementById('diskChart'), {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Allocated (GB)',
+                        data: [],
+                        backgroundColor: 'rgba(245, 158, 11, 0.6)',
+                        borderColor: 'rgb(245, 158, 11)',
+                        borderWidth: 1
+                    }]
+                },
+                options: { ...chartConfig, scales: { ...chartConfig.scales, y: { ...chartConfig.scales.y, beginAtZero: true } } }
+            });
+
+            // VM Distribution
+            charts.vmDist = new Chart(document.getElementById('vmDistChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#fff' } } } }
+            });
+        }
+
+        function selectCluster(cluster) {
+            currentCluster = cluster;
+            
+            // Update button styles
+            document.getElementById('btnLinux').className = cluster === 'linux' 
+                ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
+                : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
+            document.getElementById('btnOpenstack').className = cluster === 'openstack'
+                ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
+                : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
+
+            // Clear and restart refresh
+            if (refreshInterval) clearInterval(refreshInterval);
+            fetchClusterData();
+            refreshInterval = setInterval(fetchClusterData, 3000); // Refresh every 3s
+        }
+
+        async function fetchClusterData() {
+            try {
+                const response = await fetch(`/api/monitoring/cluster/${currentCluster}`);
+                if (!response.ok) throw new Error('Failed to fetch data');
+                
+                const data = await response.json();
+                updateDashboard(data.cluster);
+            } catch (error) {
+                console.error('Error fetching cluster data:', error);
+            }
+        }
+
+        function updateDashboard(cluster) {
+            // Update summary cards
+            document.getElementById('totalWorkers').textContent = cluster.workers.length;
+            document.getElementById('totalVMs').textContent = cluster.vms_count;
+            document.getElementById('totalCPU').textContent = cluster.total_usage.cpu.mean.toFixed(1) + '%';
+            document.getElementById('totalRAM').textContent = cluster.total_usage.ram.mean.toFixed(0) + ' MB';
+
+            // Prepare data for charts
+            const workers = cluster.workers;
+            const labels = workers.map(w => w.worker_ip);
+            const cpuData = workers.map(w => w.usage.cpu.mean);
+            const ramData = workers.map(w => w.usage.ram.mean);
+            const diskData = workers.map(w => w.usage.disk.allocated_gb);
+            const vmCounts = workers.map(w => w.vms_count);
+
+            // Update charts
+            charts.cpu.data.labels = labels;
+            charts.cpu.data.datasets[0].data = cpuData;
+            charts.cpu.update();
+
+            charts.ram.data.labels = labels;
+            charts.ram.data.datasets[0].data = ramData;
+            charts.ram.update();
+
+            charts.disk.data.labels = labels;
+            charts.disk.data.datasets[0].data = diskData;
+            charts.disk.update();
+
+            charts.vmDist.data.labels = labels;
+            charts.vmDist.data.datasets[0].data = vmCounts;
+            charts.vmDist.update();
+
+            // Update workers table
+            updateWorkersTable(workers);
+        }
+
+        function updateWorkersTable(workers) {
+            const tbody = document.getElementById('workersTable');
+            tbody.innerHTML = workers.map(w => {
+                const cpuUtil = (w.usage.cpu.mean / w.capacity.cores) * 100;
+                const ramUtil = (w.usage.ram.mean / w.capacity.ram_mb) * 100;
+                const diskUtil = (w.usage.disk.allocated_gb / w.capacity.disk_gb) * 100;
+                
+                let status = 'active';
+                if (cpuUtil > 80 || ramUtil > 80 || diskUtil > 80) status = 'warning';
+                if (cpuUtil > 95 || ramUtil > 95 || diskUtil > 95) status = 'critical';
+
+                return `
+                    <tr class="hover:bg-gray-700 transition">
+                        <td class="px-4 py-3"><span class="worker-status ${status}"></span></td>
+                        <td class="px-4 py-3 font-mono">${w.worker_ip}</td>
+                        <td class="px-4 py-3 text-right">${w.vms_count}</td>
+                        <td class="px-4 py-3 text-right">${w.usage.cpu.mean.toFixed(1)} ± ${w.usage.cpu.std_dev.toFixed(1)}</td>
+                        <td class="px-4 py-3 text-right">${w.usage.ram.mean.toFixed(0)} ± ${w.usage.ram.std_dev.toFixed(0)}</td>
+                        <td class="px-4 py-3 text-right">${w.usage.disk.allocated_gb.toFixed(1)} / ${w.capacity.disk_gb.toFixed(1)}</td>
+                        <td class="px-4 py-3 text-right">
+                            <span class="text-xs">
+                                ${w.capacity.cores} cores, ${(w.capacity.ram_mb / 1024).toFixed(1)} GB
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function logout() {
+            fetch('/api/logout', { method: 'POST' })
+                .then(() => window.location.href = '/login');
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (refreshInterval) clearInterval(refreshInterval);
+        });
+    </script>
+</body>
+</html>

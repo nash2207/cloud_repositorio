@@ -13,18 +13,11 @@ class User:
 
 class Flavor:
     FLAVORS = {
-        "cirros": {
-            "cores": 1, 
-            "ram_gb": 0.5, 
-            "disk_gb": 1, 
-            "image": "/tmp/vm_images/cirros-0.6.2-x86_64-disk.img",
-            "interface_prefix": "eth"  # eth0, eth1, eth2...
-        },
         "ubuntu": {
             "cores": 1, 
             "ram_gb": 0.5, 
-            "disk_gb": 2.2, 
-            "image": "/tmp/vm_images/focal-server-cloudimg-amd64.img",
+            "disk_gb": 2.5, 
+            "image": "/tmp/vm_images/ubuntu-24.04-minimal-cloudimg-amd64.img",
             "interface_prefix": "ens"  # ens3, ens4, ens5...
         }
     }

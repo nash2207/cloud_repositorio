@@ -1,254 +1,324 @@
 """
-Monitor Manager - Orchestrates metrics collection and statistical analysis
-Updates database with real-time μ and σ using Welford's algorithm
+Real-time Monitoring System with Welford's Algorithm
+Collects metrics every 1s (CPU/RAM) and discovers VMs every 5s
+Updates database with μ and σ using Welford's online algorithm
 """
 import logging
 import threading
 import time
 from monitoring.collector import MetricsCollector
-from monitoring.stats import OnlineStats
+from monitoring.welford_stats import WorkerMetrics
 
 logger = logging.getLogger(__name__)
 
 
-class MonitorManager:
+class MonitoringSystem:
     """
-    Main monitoring orchestrator
-    - Collects metrics every interval
-    - Updates Welford statistics
-    - Persists to database
+    Real-time monitoring system for VM placement algorithm
+    - Discovers VMs every 5 seconds
+    - Collects CPU/RAM metrics every 1 second
+    - Calculates μ and σ using Welford's algorithm
     """
     
-    def __init__(self, db, remote_executor, interval=5):
-        self.db = db
-        self.executor = remote_executor
+    def __init__(self, database, remote_executor, clusters_config):
+        self.db = database
         self.collector = MetricsCollector(remote_executor)
-        self.interval = interval  # seconds between collections
+        self.clusters_config = clusters_config
         
-        # In-memory stats objects: {vm_id: {'cpu': OnlineStats, 'memory': OnlineStats}}
-        self.vm_stats = {}
+        # Worker metrics storage: {worker_ip: WorkerMetrics}
+        self.workers = {}
         
-        # Worker stats: {worker_ip: {'cpu': OnlineStats, 'memory': OnlineStats}}
-        self.worker_stats = {}
-        
-        # Control
+        # Control threads
         self.running = False
-        self.thread = None
+        self.discovery_thread = None
+        self.metrics_thread = None
         
-        # Load existing stats from database
-        self._load_stats_from_db()
-    
-    def _load_stats_from_db(self):
-        """Load existing Welford stats from database"""
-        try:
-            vm_metrics = self.db.data.get('vm_metrics', {})
-            for vm_id, metrics in vm_metrics.items():
-                if 'stats' in metrics:
-                    self.vm_stats[vm_id] = {
-                        'cpu': OnlineStats.from_dict(metrics['stats'].get('cpu', {})),
-                        'memory': OnlineStats.from_dict(metrics['stats'].get('memory', {})),
-                        'disk_read': OnlineStats.from_dict(metrics['stats'].get('disk_read', {})),
-                        'disk_write': OnlineStats.from_dict(metrics['stats'].get('disk_write', {}))
-                    }
-            
-            worker_metrics = self.db.data.get('worker_metrics', {})
-            for worker_ip, metrics in worker_metrics.items():
-                if 'stats' in metrics:
-                    self.worker_stats[worker_ip] = {
-                        'cpu': OnlineStats.from_dict(metrics['stats'].get('cpu', {})),
-                        'memory': OnlineStats.from_dict(metrics['stats'].get('memory', {}))
-                    }
-            
-            logger.info(f"Loaded stats for {len(self.vm_stats)} VMs and {len(self.worker_stats)} workers")
-            
-        except Exception as e:
-            logger.error(f"Error loading stats from DB: {e}")
+        # Timing control
+        self.discovery_interval = 5  # seconds
+        self.metrics_interval = 1  # seconds
+        
+        self.lock = threading.Lock()
+        
+        logger.info("Monitoring system initialized")
     
     def start(self):
-        """Start monitoring thread"""
+        """Start monitoring threads"""
         if self.running:
-            logger.warning("Monitor already running")
+            logger.warning("Monitoring system already running")
             return
         
         self.running = True
-        self.thread = threading.Thread(target=self._monitoring_loop, daemon=True)
-        self.thread.start()
-        logger.info(f"Monitor started (interval: {self.interval}s)")
+        
+        # Initialize workers from clusters config
+        self._initialize_workers()
+        
+        # Start discovery thread (every 5s)
+        self.discovery_thread = threading.Thread(target=self._discovery_loop, daemon=True)
+        self.discovery_thread.start()
+        
+        # Start metrics collection thread (every 1s)
+        self.metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
+        self.metrics_thread.start()
+        
+        logger.info("Monitoring system started")
     
     def stop(self):
-        """Stop monitoring thread"""
+        """Stop monitoring threads"""
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=10)
-        logger.info("Monitor stopped")
+        
+        if self.discovery_thread:
+            self.discovery_thread.join(timeout=10)
+        
+        if self.metrics_thread:
+            self.metrics_thread.join(timeout=10)
+        
+        logger.info("Monitoring system stopped")
     
-    def _monitoring_loop(self):
-        """Main monitoring loop"""
+    def _initialize_workers(self):
+        """Initialize worker tracking from clusters config"""
+        with self.lock:
+            for cluster_name, cluster_config in self.clusters_config.items():
+                workers = cluster_config.get("workers", [])
+                for worker_ip in workers:
+                    if worker_ip not in self.workers:
+                        self.workers[worker_ip] = WorkerMetrics(worker_ip)
+                        logger.info(f"Initialized worker tracking: {worker_ip} ({cluster_name})")
+    
+    def _discovery_loop(self):
+        """Discovery loop - runs every 5 seconds to map VMs to workers"""
+        logger.info("VM discovery loop started (interval: 5s)")
+        
         while self.running:
             try:
-                # Collect VM metrics
-                self._collect_all_vm_metrics()
-                
-                # Collect worker metrics
-                self._collect_all_worker_metrics()
-                
-                # Persist to database
-                self._persist_metrics()
-                
-                time.sleep(self.interval)
-                
+                self._discover_all_vms()
+                time.sleep(self.discovery_interval)
             except Exception as e:
-                logger.error(f"Monitoring loop error: {e}")
-                time.sleep(self.interval)
+                logger.error(f"Error in discovery loop: {e}")
+                time.sleep(self.discovery_interval)
     
-    def _collect_all_vm_metrics(self):
-        """Collect metrics for all running VMs"""
-        try:
-            # Get all VMs from database
-            slices = self.db.data.get('slices', {})
-            
-            for slice_id, slice_data in slices.items():
-                for vm in slice_data.get('vms', []):
-                    vm_id = vm.get('vm_id')
-                    pid = vm.get('pid')
-                    worker_ip = vm.get('worker_ip')
-                    qcow_path = vm.get('qcow_image')
-                    
-                    # Only collect if VM is deployed
-                    if vm.get('status') != 'deployed' or not pid:
-                        continue
-                    
-                    # Collect metrics
-                    metrics = self.collector.collect_vm_metrics(worker_ip, pid)
-                    
-                    if not metrics:
-                        continue
-                    
-                    # Get QCOW2 size
-                    if qcow_path:
-                        metrics['qcow_size_mb'] = self.collector.get_qcow2_size(worker_ip, qcow_path)
-                    else:
-                        metrics['qcow_size_mb'] = 0.0
-                    
-                    # Update Welford statistics
-                    self._update_vm_stats(vm_id, metrics)
-                    
-        except Exception as e:
-            logger.error(f"Error collecting VM metrics: {e}")
-    
-    def _update_vm_stats(self, vm_id, metrics):
-        """Update Welford stats for a VM"""
-        if vm_id not in self.vm_stats:
-            self.vm_stats[vm_id] = {
-                'cpu': OnlineStats(),
-                'memory': OnlineStats(),
-                'disk_read': OnlineStats(),
-                'disk_write': OnlineStats()
-            }
+    def _metrics_loop(self):
+        """Metrics collection loop - runs every 1 second for CPU/RAM"""
+        logger.info("Metrics collection loop started (interval: 1s)")
         
-        # Update with new measurements
-        self.vm_stats[vm_id]['cpu'].update(metrics.get('cpu_percent', 0.0))
-        self.vm_stats[vm_id]['memory'].update(metrics.get('memory_mb', 0.0))
-        self.vm_stats[vm_id]['disk_read'].update(metrics.get('disk_read_mb', 0.0))
-        self.vm_stats[vm_id]['disk_write'].update(metrics.get('disk_write_mb', 0.0))
+        while self.running:
+            try:
+                self._collect_all_metrics()
+                time.sleep(self.metrics_interval)
+            except Exception as e:
+                logger.error(f"Error in metrics loop: {e}")
+                time.sleep(self.metrics_interval)
     
-    def _collect_all_worker_metrics(self):
-        """Collect metrics for all workers"""
+    def _discover_all_vms(self):
+        """Discover VMs on all workers and update tracking"""
+        with self.lock:
+            for worker_ip, worker_metrics in self.workers.items():
+                try:
+                    # Get worker capacity (once per discovery)
+                    capacity = self.collector.get_worker_capacity(worker_ip)
+                    worker_metrics.set_capacity(
+                        capacity['cores'],
+                        capacity['ram_kb'],
+                        capacity['disk_gb']
+                    )
+                    
+                    # Discover running VMs
+                    vms = self.collector.discover_vms_on_worker(worker_ip)
+                    
+                    # Get current tracked PIDs
+                    current_pids = set(worker_metrics.vms.keys())
+                    discovered_pids = set(vm['pid'] for vm in vms if vm['is_daemon'])
+                    
+                    # Remove VMs that no longer exist
+                    removed_pids = current_pids - discovered_pids
+                    for pid in removed_pids:
+                        worker_metrics.remove_vm(pid)
+                    
+                    # Add new VMs (map PID to VM ID from database)
+                    new_pids = discovered_pids - current_pids
+                    for pid in new_pids:
+                        vm_id = self._map_pid_to_vm_id(worker_ip, pid)
+                        if vm_id:
+                            worker_metrics.add_vm(vm_id, pid)
+                        else:
+                            # Orphaned VM - track with PID as ID
+                            worker_metrics.add_vm(f"orphan_{pid}", pid)
+                            logger.warning(f"Orphaned VM found: PID {pid} on {worker_ip}")
+                    
+                except Exception as e:
+                    logger.error(f"Error discovering VMs on {worker_ip}: {e}")
+    
+    def _collect_all_metrics(self):
+        """Collect CPU/RAM metrics for all tracked VMs"""
+        with self.lock:
+            for worker_ip, worker_metrics in self.workers.items():
+                for pid, vm_metrics in worker_metrics.vms.items():
+                    try:
+                        # Collect CPU usage
+                        cpu_percent = self.collector.get_vm_cpu_usage(worker_ip, pid)
+                        vm_metrics.update_cpu(cpu_percent)
+                        
+                        # Collect RAM usage
+                        ram_kb = self.collector.get_vm_ram_usage(worker_ip, pid)
+                        vm_metrics.update_ram(ram_kb)
+                        
+                    except Exception as e:
+                        logger.debug(f"Error collecting metrics for PID {pid} on {worker_ip}: {e}")
+    
+    def _map_pid_to_vm_id(self, worker_ip, pid):
+        """
+        Map PID to VM ID using database
+        Matches worker_ip and looks for VMs in deployed state
+        
+        Returns:
+            int: VM ID or None if not found
+        """
         try:
-            workers = self.db.data.get('workers_list', [])
+            # Get all slices from database
+            all_slices = self.db.data.get("slices", {})
             
-            for worker_ip in workers:
-                metrics = self.collector.collect_worker_metrics(worker_ip)
-                
-                if not metrics:
+            for slice_id, slice_data in all_slices.items():
+                if slice_data.get("status") != "deployed":
                     continue
                 
-                # Update worker stats
-                self._update_worker_stats(worker_ip, metrics)
-                
-        except Exception as e:
-            logger.error(f"Error collecting worker metrics: {e}")
-    
-    def _update_worker_stats(self, worker_ip, metrics):
-        """Update Welford stats for a worker"""
-        if worker_ip not in self.worker_stats:
-            self.worker_stats[worker_ip] = {
-                'cpu': OnlineStats(),
-                'memory': OnlineStats()
-            }
-        
-        self.worker_stats[worker_ip]['cpu'].update(metrics.get('cpu_percent', 0.0))
-        self.worker_stats[worker_ip]['memory'].update(metrics.get('memory_mb', 0.0))
-    
-    def _persist_metrics(self):
-        """Save current metrics and stats to database"""
-        try:
-            # Prepare VM metrics for DB
-            vm_metrics = {}
-            for vm_id, stats_dict in self.vm_stats.items():
-                vm_metrics[vm_id] = {
-                    'current': {
-                        'cpu_mean': stats_dict['cpu'].get_mean(),
-                        'cpu_stddev': stats_dict['cpu'].get_stddev(),
-                        'memory_mean': stats_dict['memory'].get_mean(),
-                        'memory_stddev': stats_dict['memory'].get_stddev(),
-                        'disk_read_mean': stats_dict['disk_read'].get_mean(),
-                        'disk_write_mean': stats_dict['disk_write'].get_mean(),
-                        'samples': stats_dict['cpu'].n
-                    },
-                    'stats': {
-                        'cpu': stats_dict['cpu'].to_dict(),
-                        'memory': stats_dict['memory'].to_dict(),
-                        'disk_read': stats_dict['disk_read'].to_dict(),
-                        'disk_write': stats_dict['disk_write'].to_dict()
-                    }
-                }
+                for vm in slice_data.get("vms", []):
+                    if vm.get("worker_ip") == worker_ip and str(vm.get("pid")) == str(pid):
+                        return vm.get("vm_id")
             
-            # Prepare worker metrics for DB
-            worker_metrics = {}
-            for worker_ip, stats_dict in self.worker_stats.items():
-                worker_metrics[worker_ip] = {
-                    'current': {
-                        'cpu_mean': stats_dict['cpu'].get_mean(),
-                        'cpu_stddev': stats_dict['cpu'].get_stddev(),
-                        'memory_mean': stats_dict['memory'].get_mean(),
-                        'memory_stddev': stats_dict['memory'].get_stddev(),
-                        'samples': stats_dict['cpu'].n
-                    },
-                    'stats': {
-                        'cpu': stats_dict['cpu'].to_dict(),
-                        'memory': stats_dict['memory'].to_dict()
-                    }
-                }
-            
-            # Update database
-            self.db.data['vm_metrics'] = vm_metrics
-            self.db.data['worker_metrics'] = worker_metrics
-            self.db.save()
-            
-        except Exception as e:
-            logger.error(f"Error persisting metrics: {e}")
-    
-    def get_vm_stats(self, vm_id):
-        """Get current statistics for a VM"""
-        if vm_id not in self.vm_stats:
             return None
-        
-        stats = self.vm_stats[vm_id]
-        return {
-            'cpu': stats['cpu'].get_stats(),
-            'memory': stats['memory'].get_stats(),
-            'disk_read': stats['disk_read'].get_stats(),
-            'disk_write': stats['disk_write'].get_stats()
-        }
+            
+        except Exception as e:
+            logger.error(f"Error mapping PID {pid} to VM ID: {e}")
+            return None
     
     def get_worker_stats(self, worker_ip):
-        """Get current statistics for a worker"""
-        if worker_ip not in self.worker_stats:
-            return None
+        """
+        Get aggregated statistics for a worker
         
-        stats = self.worker_stats[worker_ip]
-        return {
-            'cpu': stats['cpu'].get_stats(),
-            'memory': stats['memory'].get_stats()
-        }
+        Returns:
+            dict: Worker capacity, usage (μ and σ), and VM count
+        """
+        with self.lock:
+            worker = self.workers.get(worker_ip)
+            if not worker:
+                return None
+            
+            return worker.get_aggregated_stats()
+    
+    def get_all_workers_stats(self):
+        """
+        Get statistics for all workers
+        
+        Returns:
+            list: [{worker_ip, capacity, usage, vms_count}, ...]
+        """
+        with self.lock:
+            stats = []
+            for worker_ip, worker in self.workers.items():
+                stats.append(worker.get_aggregated_stats())
+            return stats
+    
+    def get_vm_stats(self, vm_id):
+        """
+        Get statistics for a specific VM
+        
+        Returns:
+            dict: {vm_id, worker_ip, pid, cpu: {mean, std_dev}, ram: {mean, std_dev}}
+        """
+        with self.lock:
+            for worker in self.workers.values():
+                for vm_metrics in worker.vms.values():
+                    if vm_metrics.vm_id == vm_id:
+                        return vm_metrics.get_metrics()
+            return None
+    
+    def get_all_vms_stats(self):
+        """
+        Get statistics for all VMs
+        
+        Returns:
+            list: [{vm_id, worker_ip, pid, cpu, ram}, ...]
+        """
+        with self.lock:
+            all_vms = []
+            for worker in self.workers.values():
+                all_vms.extend(worker.get_all_vms().values())
+            return all_vms
+    
+    def get_cluster_stats(self, availability_zone):
+        """
+        Get aggregated statistics for an entire cluster
+        
+        Args:
+            availability_zone: "linux" or "openstack"
+        
+        Returns:
+            dict: {
+                'cluster': availability_zone,
+                'total_capacity': {cores, ram_mb, disk_gb},
+                'total_usage': {cpu: {mean, std_dev}, ram: {mean, std_dev}, disk_gb},
+                'workers': [{worker_stats}, ...],
+                'vms_count': total VMs
+            }
+        """
+        cluster_config = self.clusters_config.get(availability_zone, {})
+        cluster_workers = cluster_config.get("workers", [])
+        
+        with self.lock:
+            total_cores = 0
+            total_ram_mb = 0
+            total_disk_gb = 0
+            
+            total_cpu_mean = 0
+            total_cpu_variance = 0
+            total_ram_mean = 0
+            total_ram_variance = 0
+            total_disk_allocated = 0
+            
+            workers_stats = []
+            total_vms = 0
+            
+            for worker_ip in cluster_workers:
+                worker = self.workers.get(worker_ip)
+                if not worker:
+                    continue
+                
+                worker_stats = worker.get_aggregated_stats()
+                workers_stats.append(worker_stats)
+                
+                # Aggregate capacity
+                total_cores += worker_stats['capacity']['cores']
+                total_ram_mb += worker_stats['capacity']['ram_mb']
+                total_disk_gb += worker_stats['capacity']['disk_gb']
+                
+                # Aggregate usage
+                total_cpu_mean += worker_stats['usage']['cpu']['mean']
+                total_cpu_variance += worker_stats['usage']['cpu']['std_dev'] ** 2
+                total_ram_mean += worker_stats['usage']['ram']['mean']
+                total_ram_variance += worker_stats['usage']['ram']['std_dev'] ** 2
+                total_disk_allocated += worker_stats['usage']['disk']['allocated_gb']
+                
+                total_vms += worker_stats['vms_count']
+            
+            return {
+                'cluster': availability_zone,
+                'total_capacity': {
+                    'cores': total_cores,
+                    'ram_mb': total_ram_mb,
+                    'disk_gb': total_disk_gb
+                },
+                'total_usage': {
+                    'cpu': {
+                        'mean': total_cpu_mean,
+                        'std_dev': total_cpu_variance ** 0.5
+                    },
+                    'ram': {
+                        'mean': total_ram_mean,
+                        'std_dev': total_ram_variance ** 0.5
+                    },
+                    'disk': {
+                        'allocated_gb': total_disk_allocated
+                    }
+                },
+                'workers': workers_stats,
+                'vms_count': total_vms
+            }

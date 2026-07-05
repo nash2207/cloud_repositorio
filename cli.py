@@ -94,18 +94,13 @@ class CLI:
         slice_id = input("\nSlice ID: ").strip()
         vm_name = input("VM name: ").strip()
         
-        print("\nAvailable flavors:")
-        print("1. cirros (1 core, 0.5GB RAM, 1GB disk)")
-        print("2. ubuntu (1 core, 0.5GB RAM, 2.2GB disk)")
-        flavor_choice = input("Choose flavor (1-2): ").strip()
+        print("\nFlavor: ubuntu (1 core, 0.5GB RAM, 2.5GB disk)")
+        flavor_name = "ubuntu"
         
-        flavors = {"1": "cirros", "2": "ubuntu"}
-        flavor_name = flavors.get(flavor_choice, "cirros")
-        
-        data_interfaces = input("Number of data interfaces (eth1, eth2, ...): ").strip()
+        data_interfaces = input("Number of data interfaces (ens4, ens5, ...): ").strip()
         data_interfaces = int(data_interfaces) if data_interfaces.isdigit() else 1
         
-        internet = input("Enable internet access (eth0 in VLAN 400)? (y/n): ").strip().lower() == 'y'
+        internet = input("Enable internet access (ens3 in VLAN 400)? (y/n): ").strip().lower() == 'y'
         
         success, result = orchestrator.add_vm_to_slice(
             self.current_user, slice_id, vm_name, flavor_name,

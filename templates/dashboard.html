@@ -29,6 +29,10 @@
                 <p class="text-sm text-gray-400">Network Slice Orchestrator</p>
             </div>
             <div class="flex items-center gap-4">
+                <!-- Monitoring Button (Admin Only) -->
+                <a href="/monitoring" id="monitoringBtn" class="hidden bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded transition flex items-center gap-2">
+                    📊 Monitoring
+                </a>
                 <div class="text-right">
                     <p class="text-sm text-gray-400">Welcome</p>
                     <p class="font-semibold" id="username">{{ username }}</p>
@@ -134,10 +138,10 @@
                 </div>
                 <div class="mb-3">
                     <label class="block text-sm text-gray-400 mb-2">Flavor</label>
-                    <select id="vmFlavor" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-green-500 focus:outline-none">
-                        <option value="cirros">Cirros (512MB RAM, 1GB disk)</option>
-                        <option value="ubuntu">Ubuntu (512MB RAM, 2.2GB disk)</option>
-                    </select>
+                    <div class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 text-sm">
+                        Ubuntu 24.04 (1 core, 512MB RAM, 2.5GB disk)
+                    </div>
+                    <input type="hidden" id="vmFlavor" value="ubuntu">
                 </div>
                 <div class="mb-4">
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -165,10 +169,10 @@
                 </div>
                 <div class="mb-3">
                     <label class="block text-sm text-gray-400 mb-2">Flavor</label>
-                    <select id="editVMFlavor" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
-                        <option value="cirros">Cirros (512MB RAM, 1GB disk)</option>
-                        <option value="ubuntu">Ubuntu (512MB RAM, 2.2GB disk)</option>
-                    </select>
+                    <div class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 text-sm">
+                        Ubuntu 24.04 (1 core, 512MB RAM, 2.5GB disk)
+                    </div>
+                    <input type="hidden" id="editVMFlavor" value="ubuntu">
                 </div>
                 <div class="mb-3">
                     <label class="block text-sm text-gray-400 mb-2">Status</label>
@@ -238,10 +242,10 @@
                 </div>
                 <div class="mb-3">
                     <label class="block text-sm text-gray-400 mb-2">Flavor</label>
-                    <select id="topoFlavor" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-purple-500 focus:outline-none">
-                        <option value="cirros">Cirros (lightweight)</option>
-                        <option value="ubuntu">Ubuntu</option>
-                    </select>
+                    <div class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 text-sm">
+                        Ubuntu 24.04 (1 core, 512MB RAM, 2.5GB disk)
+                    </div>
+                    <input type="hidden" id="topoFlavor" value="ubuntu">
                 </div>
                 <div class="mb-3">
                     <label class="block text-sm text-gray-400 mb-2">Base Name</label>
@@ -303,6 +307,11 @@
             document.getElementById('vmProgressBar').style.width = ((data.used_vms / data.quota_vms) * 100) + '%';
             document.getElementById('sliceCount').textContent = data.slices;
             document.getElementById('vlanPool').textContent = data.vlan_pool;
+            
+            // Show monitoring button if admin (quota > 50 indicates admin)
+            if (data.quota_vms >= 50) {
+                document.getElementById('monitoringBtn').classList.remove('hidden');
+            }
         }
 
         function updateActiveSliceSelector() {

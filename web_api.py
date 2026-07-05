@@ -8,6 +8,7 @@ import hashlib
 import uvicorn
 import os
 import asyncio
+import time
 from pathlib import Path
 
 from database import Database
@@ -16,6 +17,7 @@ from deployment_api import DeploymentAPI
 from orchestrator_api import OrchestratorAPI
 from sync_manager import SyncManager
 from vnc_proxy import vnc_proxy_manager
+from monitoring.monitor import MonitoringSystem
 
 # Initialize FastAPI
 app = FastAPI(title="Slice Manager API")
@@ -25,7 +27,25 @@ templates = Jinja2Templates(directory="templates")
 db = Database()
 executor = RemoteExecutor()
 deployment = DeploymentAPI(executor)
-orchestrator = OrchestratorAPI(db, deployment)
+
+# Initialize monitoring system
+clusters = db.data.get("clusters", {
+    "linux": {
+        "bind_address": "10.0.0.6",
+        "network_node": "10.0.0.1",
+        "workers": ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
+    },
+    "openstack": {
+        "bind_address": "10.0.1.6",
+        "headnode": "10.0.1.1",
+        "workers": ["10.0.1.2", "10.0.1.3", "10.0.1.4"]
+    }
+})
+monitoring_system = MonitoringSystem(db, executor, clusters)
+monitoring_system.start()
+
+# Initialize orchestrator with monitoring
+orchestrator = OrchestratorAPI(db, deployment, monitoring_system)
 sync_manager = SyncManager(db, executor)
 
 # Simple session storage (in production use Redis/JWT)
@@ -147,6 +167,20 @@ async def dashboard_page(request: Request):
     if not user:
         return RedirectResponse(url="/login")
     return templates.TemplateResponse("dashboard.html", {"request": request, "username": user})
+
+@app.get("/monitoring", response_class=HTMLResponse)
+async def monitoring_page(request: Request):
+    """Monitoring dashboard (admin only)"""
+    user = verify_session(request)
+    if not user:
+        return RedirectResponse(url="/login")
+    
+    # Check if user is admin
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return templates.TemplateResponse("monitoring.html", {"request": request, "username": user})
 
 # ============= API Routes =============
 @app.post("/api/login")
@@ -434,4 +468,110 @@ async def api_get_vm_console(vm_id: int, request: Request):
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
         "console_url": console_url
+    }
+
+
+# ============= Monitoring API Endpoints =============
+@app.get("/api/monitoring/workers")
+async def api_get_workers_stats(request: Request):
+    """Get statistics for all workers (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Check if user is admin
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Get all workers stats from monitoring system
+    workers_stats = monitoring_system.get_all_workers_stats()
+    
+    return {
+        "workers": workers_stats,
+        "timestamp": time.time()
+    }
+
+@app.get("/api/monitoring/vms")
+async def api_get_vms_stats(request: Request):
+    """Get statistics for all VMs (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Check if user is admin
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Get all VMs stats from monitoring system
+    vms_stats = monitoring_system.get_all_vms_stats()
+    
+    return {
+        "vms": vms_stats,
+        "timestamp": time.time()
+    }
+
+@app.get("/api/monitoring/cluster/{availability_zone}")
+async def api_get_cluster_stats(availability_zone: str, request: Request):
+    """Get aggregated statistics for a cluster (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Check if user is admin
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if availability_zone not in ["linux", "openstack"]:
+        raise HTTPException(status_code=400, detail="Invalid availability_zone")
+    
+    # Get cluster stats
+    cluster_stats = monitoring_system.get_cluster_stats(availability_zone)
+    
+    return {
+        "cluster": cluster_stats,
+        "timestamp": time.time()
+    }
+
+@app.get("/api/monitoring/vm/{vm_id}")
+async def api_get_vm_stats(vm_id: int, request: Request):
+    """Get statistics for a specific VM"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Check if user owns this VM
+    user_data = db.get_user(user)
+    is_admin = user_data.get("role") == "admin"
+    
+    # Find VM in user's slices (or any slice if admin)
+    vm_found = False
+    if is_admin:
+        vm_found = True
+    else:
+        slice_ids = user_data.get("slices", [])
+        for slice_id in slice_ids:
+            slice_data = db.get_slice(slice_id)
+            if slice_data:
+                for vm in slice_data.get("vms", []):
+                    if vm["vm_id"] == vm_id:
+                        vm_found = True
+                        break
+            if vm_found:
+                break
+    
+    if not vm_found:
+        raise HTTPException(status_code=404, detail="VM not found or not authorized")
+    
+    # Get VM stats from monitoring system
+    vm_stats = monitoring_system.get_vm_stats(vm_id)
+    
+    if not vm_stats:
+        raise HTTPException(status_code=404, detail="VM stats not available yet")
+    
+    return {
+        "vm": vm_stats,
+        "timestamp": time.time()
     }

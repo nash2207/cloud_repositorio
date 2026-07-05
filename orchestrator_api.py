@@ -6,6 +6,7 @@ from providers.baremetal_provider import BareMetalComputeProvider
 from providers.openstack_provider import OpenStackComputeProvider
 from providers.ovs_network_provider import OVSNetworkProvider
 from topology_generator import TopologyGenerator
+from vm_placement import VMPlacementGA
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,10 @@ class OrchestratorAPI:
     Supports multi-cluster deployment with availability zones (Linux + OpenStack)
     """
     
-    def __init__(self, db, deployment_api, compute_provider=None, network_provider=None):
+    def __init__(self, db, deployment_api, monitoring_system=None, compute_provider=None, network_provider=None):
         self.db = db
         self.deployment_api = deployment_api
+        self.monitoring_system = monitoring_system  # MonitoringSystem instance
         
         # Multi-cluster configuration from database
         self.clusters = db.data.get("clusters", {
@@ -44,7 +46,25 @@ class OrchestratorAPI:
             headnode_ip=self.clusters["openstack"]["headnode"]
         )
         
-        # Round-robin state per cluster
+        # Initialize VM Placement algorithms for each cluster
+        if monitoring_system:
+            self.linux_placement_ga = VMPlacementGA(
+                monitoring_system, 
+                self.clusters["linux"],
+                "linux"
+            )
+            self.openstack_placement_ga = VMPlacementGA(
+                monitoring_system,
+                self.clusters["openstack"],
+                "openstack"
+            )
+            logger.info("VM Placement GAs initialized for both clusters")
+        else:
+            self.linux_placement_ga = None
+            self.openstack_placement_ga = None
+            logger.warning("Monitoring system not provided - using fallback round-robin")
+        
+        # Round-robin state per cluster (fallback if GA not available)
         self.round_robin_idx = {"linux": 0, "openstack": 0}
     
     def _get_cluster_config(self, availability_zone):
@@ -113,7 +133,10 @@ class OrchestratorAPI:
             return False, str(e)
     
     def add_vm_to_slice(self, username, slice_id, vm_name, flavor_name, internet_enabled=False):
-        """Add VM to slice with only management interface (dynamic interfaces added via links)"""
+        """
+        Add VM to slice with only management interface (dynamic interfaces added via links)
+        Worker placement deferred until deployment (batch placement via GA)
+        """
         user = self.db.get_user(username)
         slice_data = self.db.get_slice(str(slice_id))
         
@@ -132,7 +155,9 @@ class OrchestratorAPI:
         try:
             vm_id = self.db.get_next_vm_id()
             availability_zone = slice_data.get("availability_zone", "linux")
-            worker_ip = self.get_next_worker(availability_zone)
+            
+            # Worker placement deferred - will be calculated during deployment
+            worker_ip = "PENDING"  # Placeholder
             
             # Create VM with only management interface
             success, vm = self.deployment_api.create_vm_with_qcow(
@@ -149,7 +174,10 @@ class OrchestratorAPI:
             user["used_vms"] = user.get("used_vms", 0) + 1
             self.db.update_user(username, user)
             
-            logger.info(f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone})")
+            logger.info(
+                f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone})"
+                f" - worker placement will be calculated during deployment"
+            )
             return True, vm.to_dict()
         except Exception as e:
             logger.error(f"VM creation error: {e}")
@@ -246,6 +274,43 @@ class OrchestratorAPI:
             
             logger.info(f"Deploying slice {slice_id} to availability zone: {availability_zone}")
             
+            # === PHASE 1: Calculate VM Placement using Genetic Algorithm ===
+            vms_to_place = []
+            for vm_dict in slice_data.get("vms", []):
+                if vm_dict.get("worker_ip") == "PENDING":
+                    vms_to_place.append({
+                        'vm_id': vm_dict['vm_id'],
+                        'flavor': vm_dict['flavor']
+                    })
+            
+            if vms_to_place:
+                logger.info(f"Calculating placement for {len(vms_to_place)} VMs using GA...")
+                
+                # Get appropriate GA for this cluster
+                placement_ga = self.linux_placement_ga if availability_zone == "linux" else self.openstack_placement_ga
+                
+                if placement_ga and self.monitoring_system:
+                    # Use Genetic Algorithm for optimal placement
+                    placement, explanation = placement_ga.calculate_placement(vms_to_place)
+                    logger.info(f"GA Placement result: {placement}")
+                    logger.info(explanation)
+                    
+                    # Apply placement to VMs
+                    for vm_dict in slice_data.get("vms", []):
+                        if vm_dict['vm_id'] in placement:
+                            vm_dict['worker_ip'] = placement[vm_dict['vm_id']]
+                            logger.info(f"VM {vm_dict['vm_id']} assigned to worker {vm_dict['worker_ip']}")
+                else:
+                    # Fallback to round-robin if GA not available
+                    logger.warning("GA not available, using round-robin fallback")
+                    for vm_dict in slice_data.get("vms", []):
+                        if vm_dict.get("worker_ip") == "PENDING":
+                            vm_dict['worker_ip'] = self.get_next_worker(availability_zone)
+                
+                # Save updated placement
+                self.db.update_slice(slice_id, slice_data)
+            
+            # === PHASE 2: Deploy Infrastructure ===
             # LINUX CLUSTER DEPLOYMENT
             if availability_zone == "linux":
                 # 1. Configure VLAN 400 DHCP for internet access (gateway already exists)

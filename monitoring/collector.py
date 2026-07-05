@@ -1,237 +1,162 @@
 """
-Metrics Collector - Reads metrics from cgroups v1 and /proc
-Supports QEMU VMs running in system.slice/qemu-kvm.service
+Metrics Collector - Extract resource usage from QEMU VMs via SSH
+Uses Welford's algorithm for real-time statistical analysis
 """
 import logging
-import os
 import re
 
 logger = logging.getLogger(__name__)
 
 
 class MetricsCollector:
-    """Collects VM and worker metrics from cgroups and /proc"""
+    """
+    Collect CPU, RAM, and Disk metrics from worker nodes
+    Discovers VMs dynamically by scanning QEMU processes
+    """
     
     def __init__(self, remote_executor):
         self.executor = remote_executor
-        # cgroups v1 paths
-        self.cpu_path = "/sys/fs/cgroup/cpu,cpuacct/system.slice/qemu-kvm.service"
-        self.memory_path = "/sys/fs/cgroup/memory/system.slice/qemu-kvm.service"
-        self.blkio_path = "/sys/fs/cgroup/blkio/system.slice/qemu-kvm.service"
     
-    def collect_vm_metrics(self, worker_ip, vm_pid):
+    def discover_vms_on_worker(self, worker_ip):
         """
-        Collect metrics for a specific VM by PID
+        Discover all running QEMU VMs on a worker
+        Command: ps -eo pid,cmd | grep qemu-system | awk '{print $1, $NF}'
         
-        Args:
-            worker_ip: Worker node IP
-            vm_pid: QEMU process PID
-            
         Returns:
-            dict with cpu_percent, memory_mb, disk_iops, disk_throughput
+            list: [{'pid': '12345', 'is_daemon': True}, ...]
         """
         try:
-            metrics = {}
+            # Get all QEMU processes
+            cmd = "ps -eo pid,cmd | grep qemu-system | grep -v grep"
+            success, output = self.executor.execute_direct(worker_ip, cmd, timeout=10)
             
-            # CPU usage from /proc/[pid]/stat
-            cpu_percent = self._get_cpu_usage(worker_ip, vm_pid)
-            metrics['cpu_percent'] = cpu_percent
+            if not success or not output.strip():
+                logger.debug(f"No QEMU VMs found on {worker_ip}")
+                return []
             
-            # Memory usage from /proc/[pid]/status
-            memory_mb = self._get_memory_usage(worker_ip, vm_pid)
-            metrics['memory_mb'] = memory_mb
+            vms = []
+            for line in output.strip().split('\n'):
+                # Parse: "132387 /usr/bin/qemu-system-x86_64 ... -daemonize"
+                parts = line.split()
+                if len(parts) >= 2:
+                    pid = parts[0]
+                    # Check if it's a daemonized VM (not just qemu-system command)
+                    if '-daemonize' in line or 'qemu-system-x86_64' in line:
+                        vms.append({
+                            'pid': pid,
+                            'is_daemon': '-daemonize' in line
+                        })
             
-            # Disk stats from /proc/[pid]/io
-            disk_stats = self._get_disk_stats(worker_ip, vm_pid)
-            metrics.update(disk_stats)
-            
-            return metrics
+            logger.debug(f"Discovered {len(vms)} VMs on {worker_ip}: {[vm['pid'] for vm in vms]}")
+            return vms
             
         except Exception as e:
-            logger.error(f"Failed to collect metrics for VM PID {vm_pid} on {worker_ip}: {e}")
-            return {}
+            logger.error(f"Error discovering VMs on {worker_ip}: {e}")
+            return []
     
-    def _get_cpu_usage(self, worker_ip, pid):
+    def get_vm_cpu_usage(self, worker_ip, pid):
         """
-        Calculate CPU usage percentage from /proc/[pid]/stat
+        Get CPU usage for a VM process
+        Command: ps -p <pid> -o %cpu=
         
-        Formula:
-            cpu_percent = (utime + stime) / uptime * 100
+        Returns:
+            float: CPU percentage (e.g., 0.5 for 0.5%)
         """
         try:
-            # Read /proc/[pid]/stat
-            cmd = f"cat /proc/{pid}/stat"
+            cmd = f"ps -p {pid} -o %cpu= 2>/dev/null"
             success, output = self.executor.execute_direct(worker_ip, cmd, timeout=5)
             
-            if not success or not output:
+            if not success or not output.strip():
                 return 0.0
             
-            parts = output.split()
-            utime = int(parts[13])  # User mode jiffies
-            stime = int(parts[14])  # Kernel mode jiffies
-            
-            # Read system uptime
-            cmd_uptime = "cat /proc/uptime"
-            success_up, uptime_out = self.executor.execute_direct(worker_ip, cmd_uptime, timeout=5)
-            
-            if not success_up:
-                return 0.0
-            
-            uptime_seconds = float(uptime_out.split()[0])
-            
-            # Calculate CPU percentage (approximation)
-            # Note: This gives cumulative usage, not instantaneous
-            # For real-time %, need to sample twice with time delta
-            total_time = utime + stime
-            hz = 100  # Typical USER_HZ value
-            seconds = total_time / hz
-            
-            if uptime_seconds > 0:
-                cpu_percent = (seconds / uptime_seconds) * 100
-                return min(cpu_percent, 100.0)  # Cap at 100%
-            
-            return 0.0
+            cpu_percent = float(output.strip())
+            return cpu_percent
             
         except Exception as e:
-            logger.debug(f"CPU collection error for PID {pid}: {e}")
+            logger.debug(f"Error getting CPU for PID {pid} on {worker_ip}: {e}")
             return 0.0
     
-    def _get_memory_usage(self, worker_ip, pid):
+    def get_vm_ram_usage(self, worker_ip, pid):
         """
-        Get memory usage in MB from /proc/[pid]/status
-        
-        Reads VmRSS (Resident Set Size)
-        """
-        try:
-            cmd = f"grep VmRSS /proc/{pid}/status"
-            success, output = self.executor.execute_direct(worker_ip, cmd, timeout=5)
-            
-            if not success or not output:
-                return 0.0
-            
-            # Output format: "VmRSS:     123456 kB"
-            match = re.search(r'(\d+)\s+kB', output)
-            if match:
-                kb = int(match.group(1))
-                return kb / 1024.0  # Convert to MB
-            
-            return 0.0
-            
-        except Exception as e:
-            logger.debug(f"Memory collection error for PID {pid}: {e}")
-            return 0.0
-    
-    def _get_disk_stats(self, worker_ip, pid):
-        """
-        Get disk I/O stats from /proc/[pid]/io
+        Get RAM usage for a VM process
+        Command: ps -p <pid> -o rss=
         
         Returns:
-            dict with disk_read_mb, disk_write_mb
+            int: RAM usage in KB
         """
         try:
-            cmd = f"cat /proc/{pid}/io"
+            cmd = f"ps -p {pid} -o rss= 2>/dev/null"
             success, output = self.executor.execute_direct(worker_ip, cmd, timeout=5)
             
-            if not success or not output:
-                return {'disk_read_mb': 0.0, 'disk_write_mb': 0.0}
+            if not success or not output.strip():
+                return 0
             
-            stats = {}
-            for line in output.split('\n'):
-                if 'read_bytes' in line:
-                    bytes_read = int(line.split(':')[1].strip())
-                    stats['disk_read_mb'] = bytes_read / (1024 * 1024)
-                elif 'write_bytes' in line:
-                    bytes_write = int(line.split(':')[1].strip())
-                    stats['disk_write_mb'] = bytes_write / (1024 * 1024)
-            
-            return stats
+            ram_kb = int(output.strip())
+            return ram_kb
             
         except Exception as e:
-            logger.debug(f"Disk stats collection error for PID {pid}: {e}")
-            return {'disk_read_mb': 0.0, 'disk_write_mb': 0.0}
+            logger.debug(f"Error getting RAM for PID {pid} on {worker_ip}: {e}")
+            return 0
     
-    def get_qcow2_size(self, worker_ip, qcow_path):
+    def get_worker_capacity(self, worker_ip):
         """
-        Get actual disk usage of QCOW2 file
-        
-        Args:
-            worker_ip: Worker IP
-            qcow_path: Path to QCOW2 file
-            
-        Returns:
-            float: Size in MB
-        """
-        try:
-            cmd = f"du -m {qcow_path} | awk '{{print $1}}'"
-            success, output = self.executor.execute_direct(worker_ip, cmd, timeout=5)
-            
-            if success and output.strip():
-                return float(output.strip())
-            
-            return 0.0
-            
-        except Exception as e:
-            logger.debug(f"QCOW2 size collection error: {e}")
-            return 0.0
-    
-    def collect_worker_metrics(self, worker_ip):
-        """
-        Collect overall worker node metrics
+        Get worker physical capacity
+        Commands:
+            - grep -c ^processor /proc/cpuinfo (CPU cores)
+            - grep MemTotal /proc/meminfo (RAM in KB)
+            - df -h / (Disk space)
         
         Returns:
-            dict with cpu_percent, memory_mb, disk_used_gb
+            dict: {'cores': int, 'ram_kb': int, 'disk_gb': float}
         """
         try:
-            metrics = {}
+            # CPU cores
+            cpu_cmd = "grep -c ^processor /proc/cpuinfo"
+            success, cpu_output = self.executor.execute_direct(worker_ip, cpu_cmd, timeout=5)
+            cores = int(cpu_output.strip()) if success and cpu_output.strip() else 0
             
-            # CPU usage: average from /proc/stat
-            cmd_cpu = "grep 'cpu ' /proc/stat"
-            success, output = self.executor.execute_direct(worker_ip, cmd_cpu, timeout=5)
+            # RAM (KB)
+            ram_cmd = "grep MemTotal /proc/meminfo | awk '{print $2}'"
+            success, ram_output = self.executor.execute_direct(worker_ip, ram_cmd, timeout=5)
+            ram_kb = int(ram_output.strip()) if success and ram_output.strip() else 0
             
-            if success and output:
-                parts = output.split()
-                user = int(parts[1])
-                nice = int(parts[2])
-                system = int(parts[3])
-                idle = int(parts[4])
-                total = user + nice + system + idle
-                busy = total - idle
-                metrics['cpu_percent'] = (busy / total) * 100 if total > 0 else 0.0
-            else:
-                metrics['cpu_percent'] = 0.0
+            # Disk space on / (parse "df -h /" output)
+            disk_cmd = "df / | tail -1 | awk '{print $2}'"
+            success, disk_output = self.executor.execute_direct(worker_ip, disk_cmd, timeout=5)
             
-            # Memory: from /proc/meminfo
-            cmd_mem = "grep -E 'MemTotal|MemAvailable' /proc/meminfo"
-            success_mem, mem_output = self.executor.execute_direct(worker_ip, cmd_mem, timeout=5)
+            # Parse disk size (e.g., "9.6G" -> 9.6)
+            disk_gb = 0.0
+            if success and disk_output.strip():
+                disk_str = disk_output.strip()
+                # Remove unit letter (G, M, T)
+                if disk_str[-1].isalpha():
+                    unit = disk_str[-1].upper()
+                    size = float(disk_str[:-1])
+                    if unit == 'G':
+                        disk_gb = size
+                    elif unit == 'M':
+                        disk_gb = size / 1024.0
+                    elif unit == 'T':
+                        disk_gb = size * 1024.0
+                else:
+                    # Assume KB
+                    disk_gb = float(disk_str) / (1024.0 * 1024.0)
             
-            if success_mem and mem_output:
-                mem_total = 0
-                mem_available = 0
-                for line in mem_output.split('\n'):
-                    if 'MemTotal' in line:
-                        mem_total = int(re.search(r'(\d+)', line).group(1))
-                    elif 'MemAvailable' in line:
-                        mem_available = int(re.search(r'(\d+)', line).group(1))
-                
-                mem_used_kb = mem_total - mem_available
-                metrics['memory_mb'] = mem_used_kb / 1024.0
-                metrics['memory_total_mb'] = mem_total / 1024.0
-            else:
-                metrics['memory_mb'] = 0.0
-                metrics['memory_total_mb'] = 0.0
+            logger.debug(
+                f"Worker {worker_ip} capacity: {cores} cores, "
+                f"{ram_kb / 1024:.0f} MB RAM, {disk_gb:.1f} GB disk"
+            )
             
-            # Disk usage of home directory
-            cmd_disk = "df -BG /home/ubuntu/vm_images | tail -1 | awk '{print $3}'"
-            success_disk, disk_output = self.executor.execute_direct(worker_ip, cmd_disk, timeout=5)
-            
-            if success_disk and disk_output:
-                disk_str = disk_output.strip().replace('G', '')
-                metrics['disk_used_gb'] = float(disk_str) if disk_str else 0.0
-            else:
-                metrics['disk_used_gb'] = 0.0
-            
-            return metrics
+            return {
+                'cores': cores,
+                'ram_kb': ram_kb,
+                'disk_gb': disk_gb
+            }
             
         except Exception as e:
-            logger.error(f"Worker metrics collection error for {worker_ip}: {e}")
-            return {'cpu_percent': 0.0, 'memory_mb': 0.0, 'disk_used_gb': 0.0}
+            logger.error(f"Error getting capacity for {worker_ip}: {e}")
+            return {
+                'cores': 0,
+                'ram_kb': 0,
+                'disk_gb': 0.0
+            }

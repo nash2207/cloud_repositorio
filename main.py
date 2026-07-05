@@ -15,6 +15,7 @@ from database import Database
 from remote_executor import RemoteExecutor
 from worker_discovery import WorkerDiscovery
 from sync_manager import SyncManager
+from monitoring.monitor import MonitoringSystem
 
 # Setup logging
 logging.basicConfig(
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Global state
 db = Database()
 clusters = db.data.get("clusters", {})
-workers = clusters.get("linux", {}).get("workers", ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"])
+workers = clusters.get("linux", {}).get("workers", ["10.0.0.2", "10.0.0.3", "10.0.0.4"])
 network_node = clusters.get("linux", {}).get("network_node", "10.0.0.1")
 current_slice = {"id": None, "user": None, "orchestrator": None}
 db_path = "database.yaml"
@@ -72,6 +73,16 @@ def cleanup_local():
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     print("\n🔄 Cleaning up...")
+    
+    # Stop monitoring system
+    try:
+        import __main__
+        if hasattr(__main__, 'monitoring_system'):
+            __main__.monitoring_system.stop()
+            logger.info("Stopped monitoring system")
+    except:
+        pass
+    
     if current_slice["id"] and current_slice["orchestrator"]:
         try:
             current_slice["orchestrator"].delete_slice(
@@ -116,7 +127,12 @@ def initialize_system():
     sync_manager = SyncManager(db, executor)
     sync_manager.sync_all_workers()
     
-    return executor
+    # Initialize monitoring system
+    logger.info("Starting monitoring system...")
+    monitoring_system = MonitoringSystem(db, executor, clusters)
+    monitoring_system.start()
+    
+    return executor, monitoring_system
 
 
 def run_cli():
@@ -210,8 +226,12 @@ Examples:
     # Register signal handler
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Initialize system
-    initialize_system()
+    # Initialize system (including monitoring)
+    executor, monitoring_system = initialize_system()
+    
+    # Store monitoring system globally for signal handler
+    import __main__
+    __main__.monitoring_system = monitoring_system
     
     # Determine mode
     if args.cli:
