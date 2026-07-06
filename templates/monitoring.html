@@ -272,29 +272,53 @@
         async function fetchClusterData() {
             try {
                 const response = await fetch(`/api/monitoring/cluster/${currentCluster}`);
-                if (!response.ok) throw new Error('Failed to fetch data');
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('API Error:', response.status, errorText);
+                    throw new Error(`API returned ${response.status}: ${errorText}`);
+                }
                 
                 const data = await response.json();
+                console.log('Received cluster data:', data);
+                
+                if (!data.cluster) {
+                    console.error('Invalid response format - missing cluster data');
+                    return;
+                }
+                
                 updateDashboard(data.cluster);
             } catch (error) {
                 console.error('Error fetching cluster data:', error);
+                // Show error in UI
+                document.getElementById('totalWorkers').textContent = 'Error';
+                document.getElementById('totalVMs').textContent = 'Error';
+                document.getElementById('totalCPU').textContent = 'Error';
+                document.getElementById('totalRAM').textContent = 'Error';
             }
         }
 
         function updateDashboard(cluster) {
+            console.log('Updating dashboard with:', cluster);
+            
+            // Validate cluster data structure
+            if (!cluster.workers || !Array.isArray(cluster.workers)) {
+                console.error('Invalid cluster data - missing or invalid workers array');
+                return;
+            }
+            
             // Update summary cards
-            document.getElementById('totalWorkers').textContent = cluster.workers.length;
-            document.getElementById('totalVMs').textContent = cluster.vms_count;
-            document.getElementById('totalCPU').textContent = cluster.total_usage.cpu.mean.toFixed(1) + '%';
-            document.getElementById('totalRAM').textContent = cluster.total_usage.ram.mean.toFixed(0) + ' MB';
+            document.getElementById('totalWorkers').textContent = cluster.workers.length || 0;
+            document.getElementById('totalVMs').textContent = cluster.vms_count || 0;
+            document.getElementById('totalCPU').textContent = ((cluster.total_usage?.cpu?.mean || 0).toFixed(1)) + '%';
+            document.getElementById('totalRAM').textContent = ((cluster.total_usage?.ram?.mean || 0).toFixed(0)) + ' MB';
 
             // Prepare data for charts
             const workers = cluster.workers;
             const labels = workers.map(w => w.worker_ip);
-            const cpuData = workers.map(w => w.usage.cpu.mean);
-            const ramData = workers.map(w => w.usage.ram.mean);
-            const diskData = workers.map(w => w.usage.disk.allocated_gb);
-            const vmCounts = workers.map(w => w.vms_count);
+            const cpuData = workers.map(w => w.usage?.cpu?.mean || 0);
+            const ramData = workers.map(w => w.usage?.ram?.mean || 0);
+            const diskData = workers.map(w => w.usage?.disk?.allocated_gb || 0);
+            const vmCounts = workers.map(w => w.vms_count || 0);
 
             // Update charts
             charts.cpu.data.labels = labels;
