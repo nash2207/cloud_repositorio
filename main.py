@@ -267,7 +267,7 @@ Examples:
                 run_cli()
                 break
             elif choice == "2":
-                run_web()
+                run_web(monitoring_system)
                 break
             elif choice == "3":
                 run_both()
