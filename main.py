@@ -37,6 +37,7 @@ db_path = "database.yaml"
 db_backup = "database.yaml.backup"
 web_thread = None
 web_running = False
+monitoring_system_global = None  # Store globally for signal handler
 
 
 def cleanup_workers():
@@ -78,13 +79,13 @@ def signal_handler(sig, frame):
     print("\n🔄 Cleaning up...")
     
     # Stop monitoring system
-    try:
-        import __main__
-        if hasattr(__main__, 'monitoring_system'):
-            __main__.monitoring_system.stop()
+    global monitoring_system_global
+    if monitoring_system_global:
+        try:
+            monitoring_system_global.stop()
             logger.info("Stopped monitoring system")
-    except:
-        pass
+        except Exception as e:
+            logger.debug(f"Error stopping monitoring: {e}")
     
     if current_slice["id"] and current_slice["orchestrator"]:
         try:
@@ -150,14 +151,14 @@ def run_cli():
     cli.run()
 
 
-def run_web():
+def run_web(monitoring_system_instance):
     """Run Web interface in background thread"""
     global web_running
     import uvicorn
     from web_api import app, set_monitoring_system
     
     # Pass monitoring_system to web_api
-    set_monitoring_system(__main__.monitoring_system)
+    set_monitoring_system(monitoring_system_instance)
     
     logger.info("Starting Web interface on http://0.0.0.0:8080")
     web_running = True
@@ -173,7 +174,7 @@ def run_web():
 def start_web_background():
     """Start web server in background thread"""
     global web_thread
-    web_thread = threading.Thread(target=run_web, daemon=True)
+    web_thread = threading.Thread(target=run_web, args=(monitoring_system,), daemon=True)
     web_thread.start()
     
     # Wait for server to start
@@ -191,6 +192,8 @@ def start_web_background():
 
 def run_both():
     """Run both CLI and Web simultaneously"""
+    global monitoring_system_global
+    
     # Start web in background
     start_web_background()
     
@@ -202,6 +205,8 @@ def run_both():
 
 def main():
     """Main entry point with mode selection"""
+    global monitoring_system_global
+    
     parser = argparse.ArgumentParser(
         description="Slice Manager - Network Slice Orchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -236,16 +241,13 @@ Examples:
     
     # Initialize system (including monitoring)
     executor, monitoring_system = initialize_system()
-    
-    # Store monitoring system globally for signal handler
-    import __main__
-    __main__.monitoring_system = monitoring_system
+    monitoring_system_global = monitoring_system  # Store globally
     
     # Determine mode
     if args.cli:
         run_cli()
     elif args.web:
-        run_web()
+        run_web(monitoring_system)
     elif args.both:
         run_both()
     else:
