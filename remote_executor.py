@@ -52,14 +52,20 @@ class RemoteExecutor:
         try:
             # Use instance bind_address if not provided
             ba = bind_address or self.bind_address
-            bind_opt = f"-b {ba}" if ba else ""
+            bind_opt = ["-b", ba] if ba else []
             
-            # Add BatchMode to avoid password prompts
-            ssh_cmd = f"ssh {bind_opt} -o StrictHostKeyChecking=no -o BatchMode=yes {self.remote_user}@{remote_ip}"
-            full_cmd = f"{ssh_cmd} '{command}'"
+            # Build SSH command as list (avoids shell escaping issues)
+            ssh_cmd = [
+                "ssh",
+                *bind_opt,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "BatchMode=yes",
+                f"{self.remote_user}@{remote_ip}",
+                command  # Pass command directly, not wrapped in quotes
+            ]
             
             result = subprocess.run(
-                full_cmd, shell=True, capture_output=True, 
+                ssh_cmd, capture_output=True, 
                 text=True, timeout=timeout
             )
             

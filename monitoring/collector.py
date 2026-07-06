@@ -115,13 +115,13 @@ class MetricsCollector:
             success, cpu_output = self.executor.execute_direct(worker_ip, cpu_cmd, timeout=5)
             cores = int(cpu_output.strip()) if success and cpu_output.strip() else 0
             
-            # RAM (KB) - Using awk: escape $ as $$ for SSH shell interpretation
-            ram_cmd = "grep MemTotal /proc/meminfo | awk '{print $$2}'"
+            # RAM (KB)
+            ram_cmd = "grep MemTotal /proc/meminfo | awk '{print $2}'"
             success, ram_output = self.executor.execute_direct(worker_ip, ram_cmd, timeout=5)
             ram_kb = int(ram_output.strip()) if success and ram_output.strip() else 0
             
-            # Disk space on / - Using awk: escape $ as $$ for SSH shell interpretation
-            disk_cmd = "df / | tail -1 | awk '{print $$2}'"
+            # Disk space on /
+            disk_cmd = "df / | tail -1 | awk '{print $2}'"
             success, disk_output = self.executor.execute_direct(worker_ip, disk_cmd, timeout=5)
             
             # Parse disk size (e.g., "9.6G" -> 9.6)
