@@ -38,10 +38,13 @@ clusters = db.data.get("clusters", {
 })
 
 # Only include enabled clusters (OpenStack commented out in database.yaml)
-enabled_clusters = {k: v for k, v in clusters.items() if v is not None}
+# Global state (will be set by main.py when starting web mode)
+monitoring_system = None
 
-monitoring_system = MonitoringSystem(db, executor, enabled_clusters)
-monitoring_system.start()
+def set_monitoring_system(ms):
+    """Set the monitoring system instance from main.py"""
+    global monitoring_system
+    monitoring_system = ms
 
 # Initialize orchestrator with monitoring
 orchestrator = OrchestratorAPI(db, deployment, monitoring_system)

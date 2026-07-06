@@ -154,7 +154,10 @@ def run_web():
     """Run Web interface in background thread"""
     global web_running
     import uvicorn
-    from web_api import app
+    from web_api import app, set_monitoring_system
+    
+    # Pass monitoring_system to web_api
+    set_monitoring_system(__main__.monitoring_system)
     
     logger.info("Starting Web interface on http://0.0.0.0:8080")
     web_running = True
