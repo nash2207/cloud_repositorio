@@ -116,9 +116,10 @@
                     <label class="block text-sm text-gray-400 mb-2">Availability Zone</label>
                     <select id="sliceAvailabilityZone" class="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
                         <option value="linux">🐧 Linux Cluster (Bare-Metal QEMU)</option>
-                        <option value="openstack" disabled>☁️ OpenStack Cluster (Coming Soon)</option>
+                        <!-- OpenStack temporarily disabled -->
+                        <!-- <option value="openstack" disabled>☁️ OpenStack Cluster (Coming Soon)</option> -->
                     </select>
-                    <p class="text-xs text-gray-500 mt-1">Linux: 10.0.0.x network | OpenStack: 10.0.1.x network</p>
+                    <p class="text-xs text-gray-500 mt-1">Linux: 10.0.0.x network (3 workers: 10.0.0.2-4)</p>
                 </div>
                 <div class="flex gap-2">
                     <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded transition">Create</button>

@@ -28,44 +28,36 @@ class OrchestratorAPI:
                 "bind_address": "10.0.0.6",
                 "network_node": "10.0.0.1",
                 "workers": ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
-            },
-            "openstack": {
-                "bind_address": "10.0.1.6",
-                "headnode": "10.0.1.1",
-                "workers": ["10.0.1.2", "10.0.1.3", "10.0.1.4"]
             }
         })
+        
+        # Only include enabled clusters
+        self.clusters = {k: v for k, v in self.clusters.items() if v is not None and isinstance(v, dict)}
         
         # Initialize providers for each cluster
         self.linux_executor = deployment_api.executor  # Reuse existing executor
         self.linux_compute_provider = BareMetalComputeProvider(self.linux_executor)
         self.linux_network_provider = OVSNetworkProvider(self.linux_executor)
         
-        # OpenStack provider (STUB - will be completed in future)
-        self.openstack_compute_provider = OpenStackComputeProvider(
-            headnode_ip=self.clusters["openstack"]["headnode"]
-        )
+        # OpenStack provider (DISABLED - will be implemented later)
+        self.openstack_compute_provider = None
         
-        # Initialize VM Placement algorithms for each cluster
+        # Initialize VM Placement algorithms for enabled clusters only
         if monitoring_system:
             self.linux_placement_ga = VMPlacementGA(
                 monitoring_system, 
                 self.clusters["linux"],
                 "linux"
             )
-            self.openstack_placement_ga = VMPlacementGA(
-                monitoring_system,
-                self.clusters["openstack"],
-                "openstack"
-            )
-            logger.info("VM Placement GAs initialized for both clusters")
+            self.openstack_placement_ga = None  # Disabled
+            logger.info("VM Placement GA initialized for Linux cluster only")
         else:
             self.linux_placement_ga = None
             self.openstack_placement_ga = None
             logger.warning("Monitoring system not provided - using fallback round-robin")
         
         # Round-robin state per cluster (fallback if GA not available)
-        self.round_robin_idx = {"linux": 0, "openstack": 0}
+        self.round_robin_idx = {"linux": 0}
     
     def _get_cluster_config(self, availability_zone):
         """Get cluster configuration for given AZ"""

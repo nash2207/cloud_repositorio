@@ -34,14 +34,13 @@ clusters = db.data.get("clusters", {
         "bind_address": "10.0.0.6",
         "network_node": "10.0.0.1",
         "workers": ["10.0.0.2", "10.0.0.3", "10.0.0.4"]
-    },
-    "openstack": {
-        "bind_address": "10.0.1.6",
-        "headnode": "10.0.1.1",
-        "workers": ["10.0.1.2", "10.0.1.3", "10.0.1.4"]
     }
 })
-monitoring_system = MonitoringSystem(db, executor, clusters)
+
+# Only include enabled clusters (OpenStack commented out in database.yaml)
+enabled_clusters = {k: v for k, v in clusters.items() if v is not None}
+
+monitoring_system = MonitoringSystem(db, executor, enabled_clusters)
 monitoring_system.start()
 
 # Initialize orchestrator with monitoring

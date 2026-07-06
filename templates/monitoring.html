@@ -70,11 +70,14 @@
         <!-- Cluster Selector -->
         <div class="flex gap-4">
             <button onclick="selectCluster('linux')" id="btnLinux" class="flex-1 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition">
-                🖥️ Linux Cluster
+                🖥️ Linux Cluster (Active)
             </button>
-            <button onclick="selectCluster('openstack')" id="btnOpenstack" class="flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition">
-                ☁️ OpenStack Cluster
+            <!-- OpenStack temporarily disabled -->
+            <!--
+            <button onclick="selectCluster('openstack')" id="btnOpenstack" class="flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition" disabled>
+                ☁️ OpenStack Cluster (Coming Soon)
             </button>
+            -->
         </div>
 
         <!-- Cluster Summary Cards -->

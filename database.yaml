@@ -10,10 +10,11 @@ clusters:
       "10.0.0.2": "ens5"
       "10.0.0.3": "ens6"
       "10.0.0.4": "ens7"
-  openstack:
-    bind_address: "10.0.1.6"  # ens5 interface on app node
-    headnode: "10.0.1.1"  # OpenStack API endpoint (Keystone, Nova, Neutron, Glance)
-    workers: ["10.0.1.2", "10.0.1.3", "10.0.1.4"]  # 3 workers for VM placement
+  # OpenStack cluster disabled for now (not yet implemented)
+  # openstack:
+  #   bind_address: "10.0.1.6"  # ens5 interface on app node
+  #   headnode: "10.0.1.1"  # OpenStack API endpoint (Keystone, Nova, Neutron, Glance)
+  #   workers: ["10.0.1.2", "10.0.1.3", "10.0.1.4"]  # 3 workers for VM placement
 
 # Legacy workers_list for backward compatibility (linux cluster - 3 workers only)
 workers_list: ["10.0.0.2", "10.0.0.3", "10.0.0.4"]

@@ -27,8 +27,11 @@ logger = logging.getLogger(__name__)
 # Global state
 db = Database()
 clusters = db.data.get("clusters", {})
-workers = clusters.get("linux", {}).get("workers", ["10.0.0.2", "10.0.0.3", "10.0.0.4"])
-network_node = clusters.get("linux", {}).get("network_node", "10.0.0.1")
+
+# Only use enabled clusters
+linux_cluster = clusters.get("linux", {})
+workers = linux_cluster.get("workers", ["10.0.0.2", "10.0.0.3", "10.0.0.4"])
+network_node = linux_cluster.get("network_node", "10.0.0.1")
 current_slice = {"id": None, "user": None, "orchestrator": None}
 db_path = "database.yaml"
 db_backup = "database.yaml.backup"
@@ -129,7 +132,9 @@ def initialize_system():
     
     # Initialize monitoring system
     logger.info("Starting monitoring system...")
-    monitoring_system = MonitoringSystem(db, executor, clusters)
+    # Only monitor enabled clusters (OpenStack disabled for now)
+    enabled_clusters = {k: v for k, v in clusters.items() if v is not None and isinstance(v, dict)}
+    monitoring_system = MonitoringSystem(db, executor, enabled_clusters)
     monitoring_system.start()
     
     return executor, monitoring_system
