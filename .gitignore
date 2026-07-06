@@ -1,0 +1,47 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Logs
+*.log
+logs/
+/tmp/websockify_*.log
+
+# Database backups
+database.yaml.backup
+*.backup
+*.bak
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.qcow2
+*.iso
+
+# Documentation (managed manually by user)
+*.md
+!README.md
+
+# Test outputs
+.pytest_cache/
+.coverage
+htmlcov/
