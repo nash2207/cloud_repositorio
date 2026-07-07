@@ -529,8 +529,18 @@ async def api_get_cluster_stats(availability_zone: str, request: Request):
     if availability_zone not in ["linux", "openstack"]:
         raise HTTPException(status_code=400, detail="Invalid availability_zone")
     
+    # Check if monitoring_system is available
+    if not monitoring_system:
+        logger.error("Monitoring system is None in API endpoint!")
+        raise HTTPException(status_code=503, detail="Monitoring system not initialized")
+    
     # Get cluster stats
-    cluster_stats = monitoring_system.get_cluster_stats(availability_zone)
+    try:
+        cluster_stats = monitoring_system.get_cluster_stats(availability_zone)
+        logger.info(f"Cluster stats for {availability_zone}: {len(cluster_stats.get('workers', []))} workers, {cluster_stats.get('vms_count', 0)} VMs")
+    except Exception as e:
+        logger.error(f"Error getting cluster stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
     
     return {
         "cluster": cluster_stats,
