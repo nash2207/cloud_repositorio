@@ -255,13 +255,21 @@
         function selectCluster(cluster) {
             currentCluster = cluster;
             
-            // Update button styles
-            document.getElementById('btnLinux').className = cluster === 'linux' 
-                ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
-                : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
-            document.getElementById('btnOpenstack').className = cluster === 'openstack'
-                ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
-                : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
+            // Update button styles (only Linux button exists)
+            const btnLinux = document.getElementById('btnLinux');
+            if (btnLinux) {
+                btnLinux.className = cluster === 'linux' 
+                    ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
+                    : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
+            }
+            
+            // OpenStack button doesn't exist (commented out in HTML)
+            const btnOpenstack = document.getElementById('btnOpenstack');
+            if (btnOpenstack) {
+                btnOpenstack.className = cluster === 'openstack'
+                    ? 'flex-1 bg-blue-600 px-6 py-3 rounded-lg font-semibold'
+                    : 'flex-1 bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-semibold transition';
+            }
 
             // Clear and restart refresh
             if (refreshInterval) clearInterval(refreshInterval);
