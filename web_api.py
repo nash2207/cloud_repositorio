@@ -9,6 +9,7 @@ import uvicorn
 import os
 import asyncio
 import time
+import logging
 from pathlib import Path
 
 from database import Database
@@ -18,6 +19,8 @@ from orchestrator_api import OrchestratorAPI
 from sync_manager import SyncManager
 from vnc_proxy import vnc_proxy_manager
 from monitoring.monitor import MonitoringSystem
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
 app = FastAPI(title="Slice Manager API")
