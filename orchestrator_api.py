@@ -351,7 +351,7 @@ class OrchestratorAPI:
                         if image_path:
                             logger.info(f"Creating QCOW2 image for VM {vm_dict['vm_id']} on {worker_ip}")
                             from qcow_manager import QCOWManager
-                            qcow_mgr = QCOWManager(self.executor)
+                            qcow_mgr = QCOWManager(self.linux_executor)
                             success, qcow_img = qcow_mgr.create_backing_image(
                                 worker_ip, vm_name, image_path, []
                             )
