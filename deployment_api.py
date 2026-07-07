@@ -70,13 +70,18 @@ class DeploymentAPI:
             
             # Create QCOW2 backing image
             image_path = flavor_spec.get("image")
-            success, qcow_img = self.qcow_mgr.create_backing_image(
-                worker_ip, vm_name, image_path, []
-            ) if image_path else (True, None)
-            
-            if not success:
-                logger.error(f"Failed to create QCOW2 image for {vm_name}")
-                return False, None
+            # Don't create QCOW2 yet if worker is not assigned - defer until deployment
+            if worker_ip != "PENDING" and image_path:
+                success, qcow_img = self.qcow_mgr.create_backing_image(
+                    worker_ip, vm_name, image_path, []
+                )
+                if not success:
+                    logger.error(f"Failed to create QCOW2 image for {vm_name}")
+                    return False, None
+            else:
+                # Defer QCOW2 creation until deployment when worker_ip is assigned
+                qcow_img = None
+                logger.info(f"QCOW2 creation deferred for {vm_name} until deployment")
             
             # Create VM object
             vm = VM(
