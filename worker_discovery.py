@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 class WorkerDiscovery:
     def __init__(self, remote_executor, workers=None):
         self.executor = remote_executor
-        self.workers = workers or ["10.0.10.1", "10.0.10.2", "10.0.10.3"]
+        self.workers = workers or []  # Must be provided by caller
     
     def discover_all(self, db):
         for worker_ip in self.workers:

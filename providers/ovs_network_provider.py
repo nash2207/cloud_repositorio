@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class OVSNetworkProvider(BaseNetworkProvider):
     """Network provider using OpenVSwitch and dnsmasq for DHCP"""
     
-    def __init__(self, remote_executor, network_node_ip="10.0.10.3"):
+    def __init__(self, remote_executor, network_node_ip="10.0.0.1"):
         self.executor = remote_executor
         self.network_node_ip = network_node_ip
     

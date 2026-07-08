@@ -12,7 +12,17 @@ class SyncManager:
         self.db = db
         self.executor = remote_executor
         self.compute_provider = compute_provider or BareMetalComputeProvider(remote_executor)
-        self.workers = db.data.get("workers_list", ["10.0.10.1", "10.0.10.2", "10.0.10.3"])
+        
+        # Get workers from clusters config in database
+        clusters = db.data.get("clusters", {})
+        self.workers = []
+        for cluster_name, cluster_config in clusters.items():
+            if cluster_config and isinstance(cluster_config, dict):
+                self.workers.extend(cluster_config.get("workers", []))
+        
+        if not self.workers:
+            logger.warning("No workers found in database clusters config")
+            self.workers = []
     
     def sync_all_workers(self):
         """Scan all workers and sync VMs with database"""

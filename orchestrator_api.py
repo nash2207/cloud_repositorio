@@ -37,7 +37,10 @@ class OrchestratorAPI:
         # Initialize providers for each cluster
         self.linux_executor = deployment_api.executor  # Reuse existing executor
         self.linux_compute_provider = BareMetalComputeProvider(self.linux_executor)
-        self.linux_network_provider = OVSNetworkProvider(self.linux_executor)
+        self.linux_network_provider = OVSNetworkProvider(
+            self.linux_executor, 
+            network_node_ip=self.clusters["linux"]["network_node"]
+        )
         
         # OpenStack provider (DISABLED - will be implemented later)
         self.openstack_compute_provider = None
