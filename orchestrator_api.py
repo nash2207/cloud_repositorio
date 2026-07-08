@@ -39,7 +39,8 @@ class OrchestratorAPI:
         self.linux_compute_provider = BareMetalComputeProvider(self.linux_executor)
         self.linux_network_provider = OVSNetworkProvider(
             self.linux_executor, 
-            network_node_ip=self.clusters["linux"]["network_node"]
+            network_node_ip=self.clusters["linux"]["network_node"],
+            bridge_name="br-provider"  # Use existing bridge on network node
         )
         
         # OpenStack provider (DISABLED - will be implemented later)

@@ -10,9 +10,10 @@ logger = logging.getLogger(__name__)
 class OVSNetworkProvider(BaseNetworkProvider):
     """Network provider using OpenVSwitch and dnsmasq for DHCP"""
     
-    def __init__(self, remote_executor, network_node_ip="10.0.0.1"):
+    def __init__(self, remote_executor, network_node_ip="10.0.0.1", bridge_name="br-int"):
         self.executor = remote_executor
         self.network_node_ip = network_node_ip
+        self.bridge_name = bridge_name  # Configurable OVS bridge name
     
     def create_network(self, vlan_id, cidr, gateway_ip, dhcp_enabled=True, create_gateway=True):
         """Create VLAN with gateway and optional DHCP on network node"""
@@ -21,7 +22,7 @@ class OVSNetworkProvider(BaseNetworkProvider):
             if create_gateway:
                 mask = cidr.split('/')[1]
                 cmd = f"""
-                sudo ovs-vsctl --may-exist add-port br-int gw_vlan{vlan_id} tag={vlan_id} -- set interface gw_vlan{vlan_id} type=internal
+                sudo ovs-vsctl --may-exist add-port {self.bridge_name} gw_vlan{vlan_id} tag={vlan_id} -- set interface gw_vlan{vlan_id} type=internal
                 sudo ip addr add {gateway_ip}/{mask} dev gw_vlan{vlan_id} 2>/dev/null || true
                 sudo ip link set dev gw_vlan{vlan_id} up
                 """
@@ -46,8 +47,8 @@ class OVSNetworkProvider(BaseNetworkProvider):
             cmd = f"""
             sudo ip netns exec ns-dhcp-vlan{vlan_id} pkill dnsmasq 2>/dev/null || true
             sudo ip netns delete ns-dhcp-vlan{vlan_id} 2>/dev/null || true
-            sudo ovs-vsctl --if-exists del-port br-int gw_vlan{vlan_id}
-            sudo ovs-vsctl --if-exists del-port br-int dhcp_v{vlan_id}
+            sudo ovs-vsctl --if-exists del-port {self.bridge_name} gw_vlan{vlan_id}
+            sudo ovs-vsctl --if-exists del-port {self.bridge_name} dhcp_v{vlan_id}
             sudo ip link del gw_vlan{vlan_id} 2>/dev/null || true
             """
             success, _ = self.executor.execute_direct(self.network_node_ip, cmd)
@@ -82,7 +83,7 @@ class OVSNetworkProvider(BaseNetworkProvider):
             
             # Create DHCP port on OVS
             logger.info(f"Creating DHCP port {dhcp_port} in VLAN {vlan_id}")
-            cmd2 = f"sudo ovs-vsctl --may-exist add-port br-int {dhcp_port} tag={vlan_id} -- set interface {dhcp_port} type=internal"
+            cmd2 = f"sudo ovs-vsctl --may-exist add-port {self.bridge_name} {dhcp_port} tag={vlan_id} -- set interface {dhcp_port} type=internal"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd2)
             if not success:
                 logger.error(f"Failed to create DHCP port: {output}")
