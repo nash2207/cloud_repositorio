@@ -133,16 +133,17 @@ class OVSNetworkProvider(BaseNetworkProvider):
             cmd5 = f"sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true"
             self.executor.execute_direct(self.network_node_ip, cmd5)
             
-            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=-"
-            success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=30)
+            # Run dnsmasq in background (add & to make it non-blocking)
+            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=- &"
+            success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
             
-            if not success:
-                logger.error(f"Failed to start dnsmasq for VLAN {vlan_id}: {output}")
-                return False
+            # Wait a moment for dnsmasq to start
+            import time
+            time.sleep(2)
             
             # Verify dnsmasq is running
             verify_cmd = f"sudo ip netns exec {ns_name} pgrep dnsmasq"
-            success, pid = self.executor.execute_direct(self.network_node_ip, verify_cmd)
+            success, pid = self.executor.execute_direct(self.network_node_ip, verify_cmd, timeout=5)
             
             if success and pid.strip():
                 logger.info(f"DHCP configured for VLAN {vlan_id} (dnsmasq PID: {pid.strip()})")
