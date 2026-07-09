@@ -22,6 +22,7 @@ class BareMetalComputeProvider(BaseComputeProvider):
             vm_name = vm_dict["name"]
             vnc_port = vm_dict["vnc_port"]
             qcow_image = vm_dict.get("qcow_image", "")
+            seed_iso = vm_dict.get("seed_iso", "")  # Cloud-init seed ISO
             flavor_name = vm_dict.get("flavor", "cirros")
             interfaces = vm_dict.get("interfaces", [])
             
@@ -66,6 +67,10 @@ class BareMetalComputeProvider(BaseComputeProvider):
             # Add disk
             if qcow_image:
                 qemu_cmd += f"-drive file={qcow_image},format=qcow2 "
+            
+            # Add cloud-init seed ISO as secondary read-only drive
+            if seed_iso:
+                qemu_cmd += f"-drive file={seed_iso},format=raw,readonly=on "
             
             qemu_cmd += "-daemonize"
             
@@ -115,6 +120,12 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 sudo ovs-vsctl --if-exists del-port br-provider {tap_name}
                 sudo ip link del {tap_name} 2>/dev/null || true
                 """
+                self.executor.execute_direct(worker_ip, cleanup_cmd)
+            
+            # Cleanup cloud-init seed ISO
+            seed_iso = vm_dict.get("seed_iso")
+            if seed_iso:
+                cleanup_cmd = f"rm -f {seed_iso}"
                 self.executor.execute_direct(worker_ip, cleanup_cmd)
             
             logger.info(f"VM {vm_name} stopped on {worker_ip}")

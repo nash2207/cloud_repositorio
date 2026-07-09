@@ -345,14 +345,19 @@ class OrchestratorAPI:
                         logger.error(f"Failed to configure VLAN {vlan_id}")
                         return False, f"Failed to configure VLAN {vlan_id}"
                 
-                # 3. Create QCOW2 images for all VMs (deferred from design phase)
+                # 3. Create QCOW2 images and cloud-init seeds for all VMs
+                from cloudinit_seed import CloudInitSeedGenerator
+                seed_generator = CloudInitSeedGenerator(self.linux_executor)
+                
                 for vm_dict in slice_data.get("vms", []):
-                    if not vm_dict.get("qcow_image"):  # Only if not created yet
-                        worker_ip = vm_dict.get("worker_ip")
-                        vm_name = vm_dict.get("name")  # Use "name" not "vm_name"
-                        vm_id = vm_dict.get("vm_id")
-                        flavor = vm_dict.get("flavor")
-                        
+                    worker_ip = vm_dict.get("worker_ip")
+                    vm_name = vm_dict.get("name")
+                    vm_id = vm_dict.get("vm_id")
+                    flavor = vm_dict.get("flavor")
+                    interfaces = vm_dict.get("interfaces", [])
+                    
+                    # Create QCOW2 image if not created yet
+                    if not vm_dict.get("qcow_image"):
                         from models import Flavor
                         flavor_spec = Flavor.get(flavor)
                         image_path = flavor_spec.get("image") if flavor_spec else None
@@ -370,6 +375,17 @@ class OrchestratorAPI:
                             else:
                                 logger.error(f"Failed to create QCOW2 image for VM {vm_id}")
                                 return False, f"Failed to create QCOW2 image for VM {vm_id}"
+                    
+                    # Generate cloud-init seed ISO for automatic network configuration
+                    logger.info(f"Generating cloud-init seed for VM {vm_id} ({vm_name})")
+                    success, seed_iso = seed_generator.generate_seed_iso(
+                        worker_ip, vm_id, vm_name, interfaces
+                    )
+                    if success:
+                        vm_dict["seed_iso"] = seed_iso
+                        logger.info(f"Cloud-init seed created: {seed_iso}")
+                    else:
+                        logger.warning(f"Failed to create cloud-init seed for VM {vm_id}, continuing without it")
                 
                 # 4. Launch all VMs using compute provider
                 for vm_dict in slice_data.get("vms", []):
