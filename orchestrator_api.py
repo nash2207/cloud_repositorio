@@ -229,9 +229,13 @@ class OrchestratorAPI:
             link_id = len(slice_data.get("links", [])) + 1
             link = Link(link_id, vlan_id, vm1_id, vm1_iface_name, vm2_id, vm2_iface_name)
             
-            # Add new interfaces to VMs
-            vm1_new_iface = Interface(vm1_iface_name, vlan_id=vlan_id, link_id=link_id)
-            vm2_new_iface = Interface(vm2_iface_name, vlan_id=vlan_id, link_id=link_id)
+            # Add new interfaces to VMs with generated MAC addresses
+            from deployment_api import DeploymentAPI
+            macs = self.deployment_api.generate_unique_macs(vm1_id, 1)
+            vm1_new_iface = Interface(vm1_iface_name, vlan_id=vlan_id, link_id=link_id, mac=macs[0])
+            
+            macs = self.deployment_api.generate_unique_macs(vm2_id, 1)
+            vm2_new_iface = Interface(vm2_iface_name, vlan_id=vlan_id, link_id=link_id, mac=macs[0])
             
             vm1_dict["interfaces"].append(vm1_new_iface.to_dict())
             vm2_dict["interfaces"].append(vm2_new_iface.to_dict())
