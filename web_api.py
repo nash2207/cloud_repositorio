@@ -64,13 +64,17 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
     import logging
     logger = logging.getLogger(__name__)
     
+    logger.info(f"WebSocket connection attempt for proxy port {proxy_port}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted for proxy port {proxy_port}")
     
     try:
         # Connect to local websockify
-        async with websockets.connect(f"ws://localhost:{proxy_port}") as ws:
-            logger.info(f"Connected to websockify at localhost:{proxy_port}")
+        ws_url = f"ws://localhost:{proxy_port}"
+        logger.info(f"Attempting to connect to websockify at {ws_url}")
+        
+        async with websockets.connect(ws_url) as ws:
+            logger.info(f"Successfully connected to websockify at localhost:{proxy_port}")
             
             # Bidirectional relay between browser and websockify
             async def relay_client_to_server():
@@ -79,7 +83,8 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
                         data = await websocket.receive_bytes()
                         await ws.send(data)
                 except Exception as e:
-                    logger.debug(f"Client relay ended: {e}")
+                    logger.info(f"Client->Server relay ended: {type(e).__name__}: {e}")
+                    raise
             
             async def relay_server_to_client():
                 try:
@@ -89,17 +94,25 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
                         else:
                             await websocket.send_text(message)
                 except Exception as e:
-                    logger.debug(f"Server relay ended: {e}")
+                    logger.info(f"Server->Client relay ended: {type(e).__name__}: {e}")
+                    raise
             
+            # Run both relay tasks
             await asyncio.gather(
                 relay_client_to_server(),
                 relay_server_to_client(),
                 return_exceptions=True
             )
+    except websockets.exceptions.WebSocketException as e:
+        logger.error(f"WebSocket error connecting to websockify at localhost:{proxy_port}: {e}")
+        await websocket.close(code=1011, reason=f"Cannot connect to VNC proxy: {e}")
+    except ConnectionRefusedError as e:
+        logger.error(f"Connection refused to websockify at localhost:{proxy_port}: {e}")
+        await websocket.close(code=1011, reason="VNC proxy not available")
     except Exception as e:
-        logger.error(f"WebSocket proxy error: {e}")
+        logger.error(f"WebSocket proxy error for port {proxy_port}: {type(e).__name__}: {e}")
+        await websocket.close(code=1011, reason=f"Proxy error: {e}")
     finally:
-        await websocket.close()
         logger.info(f"WebSocket closed for proxy port {proxy_port}")
 
 # ============= Static Files (AFTER WebSocket routes) =============
@@ -462,7 +475,8 @@ async def api_get_vm_console(vm_id: int, request: Request):
     
     # Return noVNC URL using WebSocket proxy through FastAPI
     # This way everything goes through port 8080 (works with SSH tunnel)
-    console_url = f"/novnc/vnc.html?path=vnc_ws/{proxy_port}&autoconnect=true&resize=scale"
+    # Note: path should be relative to the page location (already at /novnc/)
+    console_url = f"/novnc/vnc.html?path=../vnc_ws/{proxy_port}&autoconnect=true&resize=scale"
     
     logger.info(f"Returning console URL: {console_url}")
     

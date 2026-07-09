@@ -4,6 +4,8 @@ VNC Proxy Manager - Manages websockify processes for noVNC access
 import logging
 import subprocess
 import os
+import time
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +41,9 @@ class VNCProxyManager:
             return None
         
         try:
-            # Start websockify in background
+            # Start websockify in background (no --web flag, we're just proxying)
             cmd = [
                 'websockify',
-                '--web', '/home/ubuntu/cloud/static/novnc',
                 str(proxy_port),
                 f'{worker_ip}:{vnc_port}'
             ]
@@ -57,15 +58,32 @@ class VNCProxyManager:
                     start_new_session=True
                 )
             
+            # Wait for websockify to start listening
+            max_wait = 5  # seconds
+            start_time = time.time()
+            while time.time() - start_time < max_wait:
+                try:
+                    # Try to connect to the port
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)
+                    result = sock.connect_ex(('localhost', proxy_port))
+                    sock.close()
+                    if result == 0:
+                        # Port is listening
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.2)
+            else:
+                logger.warning(f"websockify on port {proxy_port} may not be ready yet")
+            
             self.proxies[proxy_port] = {
                 'worker_ip': worker_ip,
                 'vnc_port': vnc_port,
                 'pid': process.pid
             }
             
-            logger.info(f"Started websockify: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
-            logger.info(f"Proxy created: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
-            logger.info(f"Returning console URL: /novnc/vnc.html?path=vnc_ws/{proxy_port}&autoconnect=true&resize=scale")
+            logger.info(f"Started websockify (PID {process.pid}): localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
             
             return proxy_port
             
