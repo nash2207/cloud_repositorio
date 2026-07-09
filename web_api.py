@@ -29,7 +29,7 @@ templates = Jinja2Templates(directory="templates")
 # Initialize backend components
 db = Database()
 executor = RemoteExecutor()
-deployment = DeploymentAPI(executor)
+deployment = DeploymentAPI(executor, database=db)
 
 # Initialize monitoring system
 clusters = db.data.get("clusters", {

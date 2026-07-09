@@ -9,10 +9,32 @@ logger = logging.getLogger(__name__)
 class DeploymentAPI:
     """API for VM deployment - flavor-aware interface naming"""
     
-    def __init__(self, remote_executor):
+    def __init__(self, remote_executor, database=None):
         self.executor = remote_executor
         self.qcow_mgr = QCOWManager(remote_executor)
-        self.vnc_port_counter = 5900
+        self.db = database
+        self.vnc_port_counter = self._initialize_vnc_port_counter()
+    
+    def _initialize_vnc_port_counter(self):
+        """Initialize VNC port counter by finding the highest port in use from database"""
+        if not self.db:
+            return 5900
+        
+        try:
+            max_vnc_port = 5900
+            # Check all slices for existing VNC ports
+            all_slices = self.db.data.get("slices", {})
+            for slice_data in all_slices.values():
+                for vm in slice_data.get("vms", []):
+                    vnc_port = vm.get("vnc_port", 0)
+                    if vnc_port > max_vnc_port:
+                        max_vnc_port = vnc_port
+            
+            # Start from next available port
+            return max_vnc_port
+        except Exception as e:
+            logger.warning(f"Error initializing VNC port counter: {e}")
+            return 5900
     
     def generate_unique_macs(self, vm_id, count):
         """Generate unique MAC addresses for VM interfaces"""

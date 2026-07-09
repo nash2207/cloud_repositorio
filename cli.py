@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 executor = RemoteExecutor()
-deployment = DeploymentAPI(executor)
+deployment = DeploymentAPI(executor, database=db)
 orchestrator = OrchestratorAPI(db, deployment)
 monitor = HealthMonitor(db)
 
