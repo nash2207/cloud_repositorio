@@ -64,13 +64,13 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 qemu_cmd += f"-netdev tap,id=net{idx},ifname={tap_name},script=no,downscript=no "
                 qemu_cmd += f"-device e1000,netdev=net{idx},mac={mac} "
             
-            # Add disk
+            # Add primary disk (boot drive)
             if qcow_image:
-                qemu_cmd += f"-drive file={qcow_image},format=qcow2 "
+                qemu_cmd += f"-drive file={qcow_image},format=qcow2,if=virtio "
             
-            # Add cloud-init seed ISO as secondary read-only drive
+            # Add cloud-init seed ISO as CD-ROM (secondary read-only drive)
             if seed_iso:
-                qemu_cmd += f"-drive file={seed_iso},format=raw,readonly=on "
+                qemu_cmd += f"-cdrom {seed_iso} "
             
             qemu_cmd += "-daemonize"
             
