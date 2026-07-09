@@ -156,6 +156,9 @@ class CloudInitSeedGenerator:
             'ethernets': ethernets
         }
         
+        # Generate netplan YAML content
+        netplan_yaml = yaml.dump({'network': network_config}, default_flow_style=False)
+        
         # User-data format
         user_data = {
             # Preserve default user (ubuntu:ubuntu)
@@ -172,8 +175,14 @@ class CloudInitSeedGenerator:
                 ]
             },
             
-            # Network configuration (inline)
-            'network': network_config,
+            # Overwrite existing netplan files to apply our configuration
+            'write_files': [
+                {
+                    'path': '/etc/netplan/50-cloud-init.yaml',
+                    'content': netplan_yaml,
+                    'permissions': '0644'
+                }
+            ],
             
             # Set hostname
             'hostname': vm_name,
@@ -182,11 +191,14 @@ class CloudInitSeedGenerator:
             # Preserve hostname on reboot
             'manage_etc_hosts': True,
             
-            # Run commands on first boot to ensure interfaces are up
+            # Run commands on first boot
             'runcmd': [
-                'dhclient -r',  # Release any existing DHCP leases
-                'systemctl restart systemd-networkd || true',
-                'netplan apply || true'
+                # Remove old netplan configs
+                'rm -f /etc/netplan/01-netcfg.yaml',
+                'rm -f /etc/netplan/00-installer-config.yaml',
+                # Apply new netplan configuration
+                'netplan generate',
+                'netplan apply'
             ]
         }
         
