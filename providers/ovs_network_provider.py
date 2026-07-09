@@ -93,20 +93,31 @@ class OVSNetworkProvider(BaseNetworkProvider):
             import time
             time.sleep(1)
             
-            # Verify port exists
-            verify_cmd = f"ip link show {dhcp_port}"
+            # Verify port exists (check both default namespace and target namespace)
+            verify_cmd = f"ip link show {dhcp_port} || sudo ip netns exec {ns_name} ip link show {dhcp_port}"
             success, output = self.executor.execute_direct(self.network_node_ip, verify_cmd)
-            if not success:
+            
+            # If port already exists in the namespace, we can skip moving it
+            if "does not exist" in output:
                 logger.error(f"DHCP port {dhcp_port} was not created: {output}")
                 return False
+            elif ns_name in output or "netns" in output:
+                logger.info(f"DHCP port {dhcp_port} already in namespace {ns_name}, skipping move")
             
-            # Move port to namespace
-            logger.info(f"Moving {dhcp_port} to namespace {ns_name}")
-            cmd3 = f"sudo ip link set {dhcp_port} netns {ns_name}"
-            success, output = self.executor.execute_direct(self.network_node_ip, cmd3)
-            if not success:
-                logger.error(f"Failed to move port to namespace: {output}")
-                return False
+            # Move port to namespace (only if not already moved)
+            check_ns_cmd = f"sudo ip netns exec {ns_name} ip link show {dhcp_port} 2>/dev/null"
+            success, check_output = self.executor.execute_direct(self.network_node_ip, check_ns_cmd)
+            
+            if not success or dhcp_port not in check_output:
+                # Port not in namespace yet, move it
+                logger.info(f"Moving {dhcp_port} to namespace {ns_name}")
+                cmd3 = f"sudo ip link set {dhcp_port} netns {ns_name}"
+                success, output = self.executor.execute_direct(self.network_node_ip, cmd3)
+                if not success:
+                    logger.error(f"Failed to move port to namespace: {output}")
+                    return False
+            else:
+                logger.info(f"Port {dhcp_port} already in namespace {ns_name}")
             
             # Configure IP on DHCP port
             logger.info(f"Configuring IP {dhcp_ip}/{mask} on {dhcp_port}")
