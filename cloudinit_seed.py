@@ -158,6 +158,20 @@ class CloudInitSeedGenerator:
         
         # User-data format
         user_data = {
+            # Preserve default user (ubuntu:ubuntu)
+            'users': [
+                'default',  # Keep the default user from the cloud image
+            ],
+            
+            # Allow password authentication (for VNC console)
+            'ssh_pwauth': True,
+            'chpasswd': {
+                'expire': False,
+                'list': [
+                    'ubuntu:ubuntu'  # Set password for ubuntu user
+                ]
+            },
+            
             # Network configuration (inline)
             'network': network_config,
             
