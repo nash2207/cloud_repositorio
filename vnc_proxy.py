@@ -28,11 +28,19 @@ class VNCProxyManager:
         Returns:
             int: Local proxy port or None if failed
         """
-        # Check if proxy already exists
+        # Check if proxy already exists AND verify the process is still alive
         for proxy_port, info in self.proxies.items():
             if info['worker_ip'] == worker_ip and info['vnc_port'] == vnc_port:
-                logger.info(f"Reusing existing proxy: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
-                return proxy_port
+                # Verify process is still running
+                try:
+                    os.kill(info['pid'], 0)  # Signal 0 just checks if process exists
+                    logger.info(f"Reusing existing proxy: localhost:{proxy_port} -> {worker_ip}:{vnc_port}")
+                    return proxy_port
+                except OSError:
+                    # Process died, remove from tracking
+                    logger.warning(f"Proxy process {info['pid']} died, recreating")
+                    del self.proxies[proxy_port]
+                    break
         
         # Create new proxy
         proxy_port = self._find_available_port()
@@ -94,10 +102,21 @@ class VNCProxyManager:
     def _find_available_port(self):
         """Find next available proxy port"""
         while self.next_proxy_port < 7000:
-            if self.next_proxy_port not in self.proxies:
-                port = self.next_proxy_port
-                self.next_proxy_port += 1
-                return port
+            port = self.next_proxy_port
+            if port not in self.proxies:
+                # Check if port is actually free (no process listening)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    sock.bind(('localhost', port))
+                    sock.close()
+                    # Port is free
+                    self.next_proxy_port += 1
+                    return port
+                except OSError:
+                    # Port is in use (orphaned process?), skip it
+                    logger.warning(f"Port {port} is in use by another process, skipping")
+                    self.next_proxy_port += 1
+                    continue
             self.next_proxy_port += 1
         return None
     

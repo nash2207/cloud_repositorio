@@ -1,20 +1,40 @@
 """
-Genetic Algorithm for VM Placement
-Uses Welford statistics (μ and σ) for probabilistic resource allocation
-Implements oversubscription model with stochastic confidence intervals
+Genetic Algorithm for VM Placement - ORCHESTRATOR LAYER
+Uses pure mathematical functions from math_functions module
+Delegates I/O to TelemetryAdapter
+Infrastructure-agnostic optimization engine
 """
 import logging
-import random
 import math
 from typing import List, Dict, Tuple
+
+from math_functions.genetic_algorithm import genetic_algorithm
+from math_functions.resource_calculator import (
+    calculate_confidence_bound,
+    calculate_dimensionless_delta,
+    calculate_dimensionless_rho,
+    calculate_weighted_penalty,
+    calculate_weighted_imbalance,
+    calculate_fitness,
+    calculate_gamma_barrier
+)
+from telemetry_adapter import TelemetryAdapter
 
 logger = logging.getLogger(__name__)
 
 
 class VMPlacementGA:
     """
-    Genetic Algorithm for optimal VM placement
-    Based on Central Limit Theorem and Welford's online statistics
+    VM Placement Orchestrator
+    
+    Responsibilities:
+    - Coordinate between telemetry (I/O) and math (pure functions)
+    - Build fitness function callback for GA
+    - Translate GA output to infrastructure placement
+    
+    Does NOT contain:
+    - Raw mathematical logic (delegated to math_functions)
+    - I/O operations (delegated to TelemetryAdapter)
     """
     
     # Resource weights (must sum to 1.0)
@@ -24,14 +44,14 @@ class VMPlacementGA:
     
     def __init__(self, monitoring_system, cluster_config, availability_zone):
         """
-        Initialize GA for VM placement
+        Initialize VM Placement Orchestrator
         
         Args:
-            monitoring_system: MonitoringSystem instance with Welford stats
+            monitoring_system: MonitoringSystem instance
             cluster_config: Cluster configuration dict
             availability_zone: "linux" or "openstack"
         """
-        self.monitoring = monitoring_system
+        self.telemetry = TelemetryAdapter(monitoring_system)
         self.cluster_config = cluster_config
         self.availability_zone = availability_zone
         self.workers = cluster_config.get("workers", [])
@@ -47,38 +67,33 @@ class VMPlacementGA:
         self.K_cpu = 1.645
         self.K_ram = 1.645
         
-        # Barrier penalty factor Γ (dynamic per cluster)
-        # Γ = N / (w_min * ε²) where:
-        #   N = number of workers in THIS cluster
-        #   w_min = minimum resource weight (0.20 for disk)
-        #   ε = 1% tolerance for violation
+        # Calculate Γ (barrier penalty) using pure function
         N = len(self.workers)
-        w_min = min(self.W_RAM, self.W_CPU, self.W_DISK)  # w_min = 0.20 (disk)
+        w_min = min(self.W_RAM, self.W_CPU, self.W_DISK)  # 0.20
         epsilon = 0.01
-        self.GAMMA = N / (w_min * epsilon ** 2)
+        self.GAMMA = calculate_gamma_barrier(N, w_min, epsilon)
         
-        logger.info(
-            f"GA initialized for {availability_zone} cluster:"
-        )
+        logger.info(f"GA initialized for {availability_zone} cluster:")
         logger.info(f"  - Workers (N): {N}")
         logger.info(f"  - w_min (disk): {w_min}")
         logger.info(f"  - ε (tolerance): {epsilon}")
         logger.info(f"  - Γ (barrier penalty): {self.GAMMA:.0f}")
         logger.info(f"  - K_cpu (confidence): {self.K_cpu}")
         logger.info(f"  - K_ram (confidence): {self.K_ram}")
-        logger.info(f"  - Formula: Γ = {N} / ({w_min} * {epsilon}²) = {self.GAMMA:.0f}")
     
     def calculate_placement(self, vms_to_place: List[Dict]) -> Tuple[Dict[int, str], str]:
         """
         Calculate optimal VM placement using Genetic Algorithm
         
+        Orchestration method: Coordinates I/O and pure math
+        
         Args:
             vms_to_place: List of VM dicts with {vm_id, flavor}
         
         Returns:
-            Tuple[Dict[int, str], str]: 
+            Tuple[Dict[int, str], str]:
                 - {vm_id: worker_ip, ...}
-                - Explanation log of placement decision
+                - Explanation log
         """
         if not vms_to_place:
             return {}, "No VMs to place"
@@ -88,13 +103,25 @@ class VMPlacementGA:
         
         logger.info(f"Starting GA placement for {len(vms_to_place)} VMs on {len(self.workers)} workers")
         
-        # Get current worker states from monitoring system
-        workers_state = self._get_workers_state()
+        # I/O: Fetch current worker states
+        workers_state = self.telemetry.get_workers_state(self.workers)
         
-        # Run genetic algorithm
-        best_solution, best_fitness = self._run_ga(vms_to_place, workers_state)
+        # Build fitness function (closure with captured state)
+        def fitness_func(chromosome: List[int]) -> float:
+            return self._evaluate_fitness(chromosome, vms_to_place, workers_state)
         
-        # Build placement map
+        # Run GA (pure mathematical optimization)
+        best_solution, best_fitness, fitness_history = genetic_algorithm(
+            chromosome_length=len(vms_to_place),
+            gene_range=(0, len(self.workers) - 1),
+            fitness_func=fitness_func,
+            population_size=self.population_size,
+            generations=self.generations,
+            mutation_rate=self.mutation_rate,
+            elite_size=self.elite_size
+        )
+        
+        # Translate solution to placement map
         placement = {}
         for i, vm in enumerate(vms_to_place):
             worker_idx = best_solution[i]
@@ -110,109 +137,22 @@ class VMPlacementGA:
         
         return placement, explanation
     
-    def _get_workers_state(self) -> Dict[str, Dict]:
-        """
-        Get current state of all workers from monitoring system
-        
-        Returns:
-            Dict[worker_ip, {capacity, usage, vms_count}]
-        """
-        workers_state = {}
-        
-        for worker_ip in self.workers:
-            stats = self.monitoring.get_worker_stats(worker_ip)
-            if stats:
-                workers_state[worker_ip] = stats
-            else:
-                # Worker not yet initialized in monitoring
-                workers_state[worker_ip] = {
-                    'worker_ip': worker_ip,
-                    'capacity': {'cores': 4, 'ram_mb': 8000, 'disk_gb': 10},
-                    'usage': {
-                        'cpu': {'mean': 0, 'std_dev': 0},
-                        'ram': {'mean': 0, 'std_dev': 0},
-                        'disk': {'allocated_gb': 0}
-                    },
-                    'vms_count': 0
-                }
-                logger.warning(f"Worker {worker_ip} not in monitoring, using defaults")
-        
-        return workers_state
-    
-    def _run_ga(self, vms_to_place: List[Dict], workers_state: Dict) -> Tuple[List[int], float]:
-        """
-        Run Genetic Algorithm
-        
-        Returns:
-            Tuple[List[int], float]: Best solution and its fitness
-        """
-        # Initialize population
-        population = self._initialize_population(len(vms_to_place))
-        
-        best_solution = None
-        best_fitness = float('-inf')
-        
-        for generation in range(self.generations):
-            # Evaluate fitness for all individuals
-            fitness_scores = [
-                self._evaluate_fitness(individual, vms_to_place, workers_state)
-                for individual in population
-            ]
-            
-            # Track best solution
-            gen_best_idx = max(range(len(fitness_scores)), key=lambda i: fitness_scores[i])
-            gen_best_fitness = fitness_scores[gen_best_idx]
-            
-            if gen_best_fitness > best_fitness:
-                best_fitness = gen_best_fitness
-                best_solution = population[gen_best_idx].copy()
-            
-            if generation % 20 == 0:
-                logger.debug(f"Generation {generation}: best_fitness={gen_best_fitness:.2f}")
-            
-            # Selection
-            selected = self._selection(population, fitness_scores)
-            
-            # Crossover and Mutation
-            offspring = []
-            for i in range(0, len(selected) - 1, 2):
-                parent1 = selected[i]
-                parent2 = selected[i + 1]
-                child1, child2 = self._crossover(parent1, parent2)
-                offspring.append(self._mutate(child1, len(self.workers)))
-                offspring.append(self._mutate(child2, len(self.workers)))
-            
-            # Elitism: keep best solutions
-            elite_indices = sorted(
-                range(len(fitness_scores)),
-                key=lambda i: fitness_scores[i],
-                reverse=True
-            )[:self.elite_size]
-            elite = [population[i] for i in elite_indices]
-            
-            # New generation
-            population = elite + offspring[:self.population_size - len(elite)]
-        
-        return best_solution, best_fitness
-    
-    def _initialize_population(self, num_vms: int) -> List[List[int]]:
-        """Create initial random population"""
-        population = []
-        for _ in range(self.population_size):
-            individual = [random.randint(0, len(self.workers) - 1) for _ in range(num_vms)]
-            population.append(individual)
-        return population
-    
     def _evaluate_fitness(self, solution: List[int], vms: List[Dict], workers_state: Dict) -> float:
         """
-        Evaluate fitness using the master objective function
+        Evaluate fitness for a solution (chromosome)
         
-        F(X) = -[Γ * Σ(w_c * Δ²)] - Σ(w_c * ρ²)
+        Uses pure functions from resource_calculator module
         
-        Where:
-            Δ = Relative overload (penalized quadratically)
-            ρ = Relative utilization (minimized for balance)
-            Γ = Barrier penalty factor
+        Args:
+            solution: Chromosome [worker_idx_vm1, worker_idx_vm2, ...]
+            vms: List of VMs to place
+            workers_state: Current worker states
+        
+        Returns:
+            float: Fitness score (higher is better)
+        
+        Formula:
+            F(X) = -[Γ · Σ(w_c · Δ²)] - Σ(w_c · ρ²)
         """
         # Build worker assignments
         worker_assignments = {worker_ip: [] for worker_ip in self.workers}
@@ -223,44 +163,46 @@ class VMPlacementGA:
         total_penalty = 0.0
         total_imbalance = 0.0
         
+        resource_weights = {
+            'cpu': self.W_CPU,
+            'ram': self.W_RAM,
+            'disk': self.W_DISK
+        }
+        
         for worker_ip, assigned_vms in worker_assignments.items():
             worker_state = workers_state[worker_ip]
             capacity = worker_state['capacity']
             current_usage = worker_state['usage']
             
-            # Calculate confidence intervals for new load
+            # Calculate projected load with confidence bounds
             new_load = self._calculate_load_with_confidence(
                 assigned_vms, current_usage, capacity
             )
             
-            # Calculate relative overload (Δ) for each resource
-            delta_cpu = max(0, new_load['cpu'] - capacity['cores']) / capacity['cores']
-            delta_ram = max(0, new_load['ram'] - capacity['ram_mb']) / capacity['ram_mb']
-            delta_disk = max(0, new_load['disk'] - capacity['disk_gb']) / capacity['disk_gb']
+            # Calculate Δ (overload) for each resource using pure function
+            deltas = {
+                'cpu': calculate_dimensionless_delta(new_load['cpu'], capacity['cores']),
+                'ram': calculate_dimensionless_delta(new_load['ram'], capacity['ram_mb']),
+                'disk': calculate_dimensionless_delta(new_load['disk'], capacity['disk_gb'])
+            }
             
-            # Calculate relative utilization (ρ) for each resource
-            rho_cpu = new_load['cpu'] / capacity['cores']
-            rho_ram = new_load['ram'] / capacity['ram_mb']
-            rho_disk = new_load['disk'] / capacity['disk_gb']
+            # Calculate ρ (utilization) for each resource using pure function
+            rhos = {
+                'cpu': calculate_dimensionless_rho(new_load['cpu'], capacity['cores']),
+                'ram': calculate_dimensionless_rho(new_load['ram'], capacity['ram_mb']),
+                'disk': calculate_dimensionless_rho(new_load['disk'], capacity['disk_gb'])
+            }
             
-            # Penalty term (hard constraints)
-            penalty = (
-                self.W_CPU * (delta_cpu ** 2) +
-                self.W_RAM * (delta_ram ** 2) +
-                self.W_DISK * (delta_disk ** 2)
-            )
+            # Penalty term using pure function
+            penalty = calculate_weighted_penalty(deltas, resource_weights)
             total_penalty += penalty
             
-            # Imbalance term (soft constraints)
-            imbalance = (
-                self.W_CPU * (rho_cpu ** 2) +
-                self.W_RAM * (rho_ram ** 2) +
-                self.W_DISK * (rho_disk ** 2)
-            )
+            # Imbalance term using pure function
+            imbalance = calculate_weighted_imbalance(rhos, resource_weights)
             total_imbalance += imbalance
         
-        # Master objective function
-        fitness = -(self.GAMMA * total_penalty) - total_imbalance
+        # Master fitness function using pure function
+        fitness = calculate_fitness(total_penalty, total_imbalance, self.GAMMA)
         
         return fitness
     
@@ -270,69 +212,57 @@ class VMPlacementGA:
         """
         Calculate expected load using Central Limit Theorem
         
-        Confidence = Σμ + K * √(Σσ²)
+        Uses pure function: calculate_confidence_bound()
         
-        For disk (deterministic): simple sum
+        Args:
+            new_vms: VMs to be added
+            current_usage: Current usage stats
+            capacity: Worker capacity
+        
+        Returns:
+            Dict: {'cpu': float, 'ram': float, 'disk': float}
+        
+        Formula:
+            Confidence = Σμ + K * √(Σσ²)
         """
-        # Current load (mean + K * std_dev)
-        current_cpu_confidence = (
-            current_usage['cpu']['mean'] + 
-            self.K_cpu * current_usage['cpu']['std_dev']
+        # Current load (mean + K * std_dev) using pure function
+        current_cpu_confidence = calculate_confidence_bound(
+            current_usage['cpu']['mean'],
+            current_usage['cpu']['std_dev'],
+            self.K_cpu
         )
-        current_ram_confidence = (
-            current_usage['ram']['mean'] + 
-            self.K_ram * current_usage['ram']['std_dev']
+        current_ram_confidence = calculate_confidence_bound(
+            current_usage['ram']['mean'],
+            current_usage['ram']['std_dev'],
+            self.K_ram
         )
         current_disk = current_usage['disk']['allocated_gb']
         
-        # New VMs load (assume default μ and σ for new VMs)
-        # For ubuntu flavor: 1 core @ 0.5 vCPU mean, 0.5 GB RAM @ 256 MB mean
-        new_cpu_mean = len(new_vms) * 0.5  # 50% CPU usage assumed
-        new_cpu_variance = len(new_vms) * (0.15 ** 2)  # 15% std dev
-        new_cpu_confidence = new_cpu_mean + self.K_cpu * math.sqrt(new_cpu_variance)
-        
-        new_ram_mean = len(new_vms) * 256  # 256 MB mean per VM
-        new_ram_variance = len(new_vms) * (64 ** 2)  # 64 MB std dev
-        new_ram_confidence = new_ram_mean + self.K_ram * math.sqrt(new_ram_variance)
-        
-        new_disk = len(new_vms) * 2.5  # 2.5 GB per VM (deterministic)
+        # New VMs load (use default usage stats from telemetry)
+        if len(new_vms) > 0:
+            flavor = new_vms[0].get('flavor', 'ubuntu')
+            default_usage = self.telemetry.get_vm_default_usage_stats(flavor)
+            
+            new_cpu_mean = len(new_vms) * default_usage['cpu']['mean']
+            new_cpu_variance = len(new_vms) * (default_usage['cpu']['std_dev'] ** 2)
+            new_cpu_confidence = new_cpu_mean + self.K_cpu * math.sqrt(new_cpu_variance)
+            
+            new_ram_mean = len(new_vms) * default_usage['ram']['mean']
+            new_ram_variance = len(new_vms) * (default_usage['ram']['std_dev'] ** 2)
+            new_ram_confidence = new_ram_mean + self.K_ram * math.sqrt(new_ram_variance)
+            
+            resources = self.telemetry.get_vm_flavor_resources(flavor)
+            new_disk = len(new_vms) * resources['disk_gb']
+        else:
+            new_cpu_confidence = 0
+            new_ram_confidence = 0
+            new_disk = 0
         
         return {
             'cpu': current_cpu_confidence + new_cpu_confidence,
             'ram': current_ram_confidence + new_ram_confidence,
             'disk': current_disk + new_disk
         }
-    
-    def _selection(self, population: List[List[int]], fitness_scores: List[float]) -> List[List[int]]:
-        """Tournament selection"""
-        selected = []
-        tournament_size = 3
-        
-        for _ in range(len(population)):
-            tournament = random.sample(list(zip(population, fitness_scores)), tournament_size)
-            winner = max(tournament, key=lambda x: x[1])[0]
-            selected.append(winner.copy())
-        
-        return selected
-    
-    def _crossover(self, parent1: List[int], parent2: List[int]) -> Tuple[List[int], List[int]]:
-        """Single-point crossover"""
-        if len(parent1) <= 1:
-            return parent1.copy(), parent2.copy()
-        
-        point = random.randint(1, len(parent1) - 1)
-        child1 = parent1[:point] + parent2[point:]
-        child2 = parent2[:point] + parent1[point:]
-        
-        return child1, child2
-    
-    def _mutate(self, individual: List[int], num_workers: int) -> List[int]:
-        """Random mutation"""
-        mutated = individual.copy()
-        for i in range(len(mutated)):
-            if random.random() < self.mutation_rate:
-                mutated[i] = random.randint(0, num_workers - 1)
-        return mutated
     
     def _generate_explanation(self, vms: List[Dict], placement: Dict[int, str], 
                              workers_state: Dict, fitness: float) -> str:

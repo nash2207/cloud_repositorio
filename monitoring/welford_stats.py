@@ -1,9 +1,13 @@
 """
 Welford's Online Algorithm for Computing Mean and Variance
 Computes μ (mean) and σ² (variance) in O(1) space without storing historical data
+
+NOTE: This is a STATEFUL WRAPPER around pure mathematical functions
+Pure functions are in: math_functions.welford_pure
 """
 import logging
 import threading
+from math_functions.welford_pure import welford_update, welford_get_variance, welford_get_std_dev
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +15,13 @@ logger = logging.getLogger(__name__)
 class WelfordStats:
     """
     Online statistics tracker using Welford's algorithm
-    Tracks mean (μ) and standard deviation (σ) for CPU and RAM metrics
+    
+    This is a STATEFUL WRAPPER that:
+    - Manages state (n, mean, M2)
+    - Provides thread-safety
+    - Delegates calculations to pure functions
+    
+    Pure mathematical logic is in: math_functions.welford_pure
     """
     
     def __init__(self, metric_name):
@@ -23,26 +33,21 @@ class WelfordStats:
     
     def update(self, value):
         """
-        Update statistics with a new sample using Welford's algorithm
+        Update statistics with a new sample
+        
+        Delegates to pure function: welford_update()
         
         Args:
             value: New sample value (CPU % or RAM MB)
-        
-        Algorithm:
-            μ_n = μ_{n-1} + (x_n - μ_{n-1}) / n
-            M2_n = M2_{n-1} + (x_n - μ_{n-1})(x_n - μ_n)
-            σ² = M2 / (n - 1)
         """
         with self.lock:
-            self.n += 1
-            delta = value - self.mean
-            self.mean += delta / self.n
-            delta2 = value - self.mean
-            self.M2 += delta * delta2
+            self.n, self.mean, self.M2 = welford_update(self.n, self.mean, self.M2, value)
     
     def get_stats(self):
         """
         Get current statistics
+        
+        Delegates to pure functions: welford_get_variance(), welford_get_std_dev()
         
         Returns:
             dict: {
@@ -53,16 +58,8 @@ class WelfordStats:
             }
         """
         with self.lock:
-            if self.n < 2:
-                return {
-                    'mean': self.mean,
-                    'variance': 0.0,
-                    'std_dev': 0.0,
-                    'samples': self.n
-                }
-            
-            variance = self.M2 / (self.n - 1)
-            std_dev = variance ** 0.5
+            variance = welford_get_variance(self.n, self.M2)
+            std_dev = welford_get_std_dev(self.n, self.M2)
             
             return {
                 'mean': self.mean,
@@ -185,6 +182,8 @@ class WorkerMetrics:
         """
         Calculate aggregated resource usage using Welford statistics
         
+        Uses pure function: welford_combine_variances()
+        
         Returns:
             dict: {
                 'worker_ip': Worker IP,
@@ -197,16 +196,19 @@ class WorkerMetrics:
                 'vms_count': Number of VMs
             }
         """
+        from math_functions.welford_pure import welford_combine_std_dev
+        
         with self.lock:
             total_cpu_mean = sum(vm.cpu_stats.get_stats()['mean'] for vm in self.vms.values())
             total_ram_mean = sum(vm.ram_stats.get_stats()['mean'] for vm in self.vms.values())
             
             # Variance of sum = sum of variances (independent variables)
-            total_cpu_variance = sum(vm.cpu_stats.get_stats()['variance'] for vm in self.vms.values())
-            total_ram_variance = sum(vm.ram_stats.get_stats()['variance'] for vm in self.vms.values())
+            # Use pure function for combining variances
+            cpu_variances = [vm.cpu_stats.get_stats()['variance'] for vm in self.vms.values()]
+            ram_variances = [vm.ram_stats.get_stats()['variance'] for vm in self.vms.values()]
             
-            total_cpu_std = total_cpu_variance ** 0.5
-            total_ram_std = total_ram_variance ** 0.5
+            total_cpu_std = welford_combine_std_dev(cpu_variances)
+            total_ram_std = welford_combine_std_dev(ram_variances)
             
             # Disk is deterministic (2.5 GB per VM)
             total_disk_allocated = len(self.vms) * 2.5
