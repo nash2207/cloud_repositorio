@@ -50,7 +50,7 @@ class BareMetalComputeProvider(BaseComputeProvider):
                     tap_cmd = f"""
                     sudo ip tuntap add mode tap name {tap_name}
                     sudo ip link set dev {tap_name} up
-                    sudo ovs-vsctl --may-exist add-port br-int {tap_name} tag={vlan_id}
+                    sudo ovs-vsctl --may-exist add-port br-provider {tap_name} tag={vlan_id}
                     """
                     success, _ = self.executor.execute_direct(worker_ip, tap_cmd)
                     if not success:
@@ -109,7 +109,7 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 iface_name = iface["name"] if isinstance(iface, dict) else iface.name
                 tap_name = f"tap_{vm_id}_{iface_name}"
                 cleanup_cmd = f"""
-                sudo ovs-vsctl --if-exists del-port br-int {tap_name}
+                sudo ovs-vsctl --if-exists del-port br-provider {tap_name}
                 sudo ip link del {tap_name} 2>/dev/null || true
                 """
                 self.executor.execute_direct(worker_ip, cleanup_cmd)

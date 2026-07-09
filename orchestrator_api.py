@@ -345,7 +345,8 @@ class OrchestratorAPI:
                 for vm_dict in slice_data.get("vms", []):
                     if not vm_dict.get("qcow_image"):  # Only if not created yet
                         worker_ip = vm_dict.get("worker_ip")
-                        vm_name = vm_dict.get("vm_name")
+                        vm_name = vm_dict.get("name")  # Use "name" not "vm_name"
+                        vm_id = vm_dict.get("vm_id")
                         flavor = vm_dict.get("flavor")
                         
                         from models import Flavor
@@ -353,7 +354,7 @@ class OrchestratorAPI:
                         image_path = flavor_spec.get("image") if flavor_spec else None
                         
                         if image_path:
-                            logger.info(f"Creating QCOW2 image for VM {vm_dict['vm_id']} on {worker_ip}")
+                            logger.info(f"Creating QCOW2 image for VM {vm_id} ({vm_name}) on {worker_ip}")
                             from qcow_manager import QCOWManager
                             qcow_mgr = QCOWManager(self.linux_executor)
                             success, qcow_img = qcow_mgr.create_backing_image(
@@ -363,8 +364,8 @@ class OrchestratorAPI:
                                 vm_dict["qcow_image"] = qcow_img
                                 logger.info(f"QCOW2 image created: {qcow_img}")
                             else:
-                                logger.error(f"Failed to create QCOW2 image for VM {vm_dict['vm_id']}")
-                                return False, f"Failed to create QCOW2 image for VM {vm_dict['vm_id']}"
+                                logger.error(f"Failed to create QCOW2 image for VM {vm_id}")
+                                return False, f"Failed to create QCOW2 image for VM {vm_id}"
                 
                 # 4. Launch all VMs using compute provider
                 for vm_dict in slice_data.get("vms", []):
