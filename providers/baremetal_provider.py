@@ -45,20 +45,23 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 mac = iface.get("mac", "") if isinstance(iface, dict) else iface.mac
                 vlan_id = iface.get("vlan_id") if isinstance(iface, dict) else iface.vlan_id
                 
+                # If no VLAN specified, use VLAN 400 for management/internet
+                if not vlan_id:
+                    vlan_id = 400
+                
                 # Create TAP and connect to OVS with VLAN tag
-                if vlan_id:
-                    tap_cmd = f"""
-                    sudo ip tuntap add mode tap name {tap_name}
-                    sudo ip link set dev {tap_name} up
-                    sudo ovs-vsctl --may-exist add-port br-provider {tap_name} tag={vlan_id}
-                    """
-                    success, _ = self.executor.execute_direct(worker_ip, tap_cmd)
-                    if not success:
-                        logger.error(f"Failed to create TAP {tap_name}")
-                        continue
-                    
-                    qemu_cmd += f"-netdev tap,id=net{idx},ifname={tap_name},script=no,downscript=no "
-                    qemu_cmd += f"-device e1000,netdev=net{idx},mac={mac} "
+                tap_cmd = f"""
+                sudo ip tuntap add mode tap name {tap_name}
+                sudo ip link set dev {tap_name} up
+                sudo ovs-vsctl --may-exist add-port br-provider {tap_name} tag={vlan_id}
+                """
+                success, _ = self.executor.execute_direct(worker_ip, tap_cmd)
+                if not success:
+                    logger.error(f"Failed to create TAP {tap_name}")
+                    continue
+                
+                qemu_cmd += f"-netdev tap,id=net{idx},ifname={tap_name},script=no,downscript=no "
+                qemu_cmd += f"-device e1000,netdev=net{idx},mac={mac} "
             
             # Add disk
             if qcow_image:
