@@ -2,7 +2,7 @@
 Pure mathematical functions for Welford's Algorithm
 Zero I/O, pure deterministic calculations
 """
-from typing import Tuple
+from typing import Tuple, List
 
 
 def welford_update(n: int, mean: float, M2: float, new_value: float) -> Tuple[int, float, float]:
@@ -77,7 +77,7 @@ def welford_get_std_dev(n: int, M2: float) -> float:
     return variance ** 0.5
 
 
-def welford_combine_variances(variances: list[float]) -> float:
+def welford_combine_variances(variances: List[float]) -> float:
     """
     Combine variances of independent random variables
     
@@ -95,7 +95,7 @@ def welford_combine_variances(variances: list[float]) -> float:
     return sum(variances)
 
 
-def welford_combine_std_dev(variances: list[float]) -> float:
+def welford_combine_std_dev(variances: List[float]) -> float:
     """
     Calculate standard deviation of sum of independent variables
     
