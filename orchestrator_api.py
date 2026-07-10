@@ -59,12 +59,12 @@ class OrchestratorAPI:
         else:
             self.linux_placement_ga = None
             self.openstack_placement_ga = None
+            logger.warning("Monitoring system not provided - using fallback round-robin")
         
         # Initialize VLAN Trunk Manager for physical switch
         physical_switch_ip = "10.0.0.7"  # ovs1
         self.vlan_trunk_manager = VLANTrunkManager(self.linux_executor, physical_switch_ip)
         logger.info(f"VLAN Trunk Manager initialized for physical switch {physical_switch_ip}")
-            logger.warning("Monitoring system not provided - using fallback round-robin")
         
         # Round-robin state per cluster (fallback if GA not available)
         self.round_robin_idx = {"linux": 0}
