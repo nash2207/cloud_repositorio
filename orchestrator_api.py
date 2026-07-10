@@ -7,6 +7,7 @@ from providers.openstack_provider import OpenStackComputeProvider
 from providers.ovs_network_provider import OVSNetworkProvider
 from topology_generator import TopologyGenerator
 from vm_placement import VMPlacementGA
+from vlan_trunk_manager import VLANTrunkManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,11 @@ class OrchestratorAPI:
         else:
             self.linux_placement_ga = None
             self.openstack_placement_ga = None
+        
+        # Initialize VLAN Trunk Manager for physical switch
+        physical_switch_ip = "10.0.0.7"  # ovs1
+        self.vlan_trunk_manager = VLANTrunkManager(self.linux_executor, physical_switch_ip)
+        logger.info(f"VLAN Trunk Manager initialized for physical switch {physical_switch_ip}")
             logger.warning("Monitoring system not provided - using fallback round-robin")
         
         # Round-robin state per cluster (fallback if GA not available)
@@ -345,6 +351,10 @@ class OrchestratorAPI:
                         logger.error(f"Failed to configure VLAN {vlan_id}")
                         return False, f"Failed to configure VLAN {vlan_id}"
                 
+                # 2.5. Add VLANs to physical switch trunk ports
+                logger.info("Configuring physical switch VLAN trunks")
+                self.vlan_trunk_manager.add_slice_vlans_to_trunks(slice_data)
+                
                 # 3. Create QCOW2 images and cloud-init seeds for all VMs
                 from cloudinit_seed import CloudInitSeedGenerator
                 seed_generator = CloudInitSeedGenerator(self.linux_executor)
@@ -448,9 +458,18 @@ class OrchestratorAPI:
                         compute_provider.stop_vm(worker_ip, vm_dict)
                     
                     # Cleanup VLANs on network node
+                    vlan_list = []
                     for link in slice_data.get("links", []):
                         vlan_id = link.get("vlan_id")
                         network_provider.delete_network(vlan_id)
+                        vlan_list.append(vlan_id)
+                    
+                    # Cleanup orphaned VLAN ports on network node
+                    network_node_ip = self.clusters[availability_zone].get("network_node")
+                    self.vlan_trunk_manager.cleanup_network_node_vlans(network_node_ip, vlan_list)
+                    
+                    # Remove VLANs from physical switch trunks
+                    self.vlan_trunk_manager.remove_slice_vlans_from_trunks(slice_data)
                 
                 elif availability_zone == "openstack":
                     logger.warning("OpenStack cleanup - STUB NOT IMPLEMENTED")
