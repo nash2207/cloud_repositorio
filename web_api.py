@@ -103,6 +103,9 @@ async def vnc_websocket_proxy(websocket: WebSocket, proxy_port: int):
                 relay_server_to_client(),
                 return_exceptions=True
             )
+    except asyncio.CancelledError:
+        # Graceful shutdown - don't log error
+        pass
     except websockets.exceptions.WebSocketException as e:
         logger.error(f"WebSocket error connecting to websockify at localhost:{proxy_port}: {e}")
         await websocket.close(code=1011, reason=f"Cannot connect to VNC proxy: {e}")

@@ -78,6 +78,11 @@ def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     print("\n🔄 Cleaning up...")
     
+    # Disable further logging to reduce noise
+    logging.getLogger('uvicorn').setLevel(logging.CRITICAL)
+    logging.getLogger('uvicorn.error').setLevel(logging.CRITICAL)
+    logging.getLogger('fastapi').setLevel(logging.CRITICAL)
+    
     # Stop monitoring system
     global monitoring_system_global
     if monitoring_system_global:
@@ -108,7 +113,10 @@ def signal_handler(sig, frame):
     cleanup_network_node()
     cleanup_local()
     print("✅ Done\n")
-    sys.exit(0)
+    
+    # Exit without raising SystemExit through uvicorn's async loop
+    import os
+    os._exit(0)
 
 
 def initialize_system():

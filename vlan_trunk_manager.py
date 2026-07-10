@@ -193,7 +193,11 @@ class VLANTrunkManager:
             for vlans in worker_vlans.values():
                 all_vlans.update(vlans)
             
-            # Add VLANs to network node trunk
+            # Add VLANs to network node uplink trunk (on network node itself)
+            if all_vlans:
+                self._configure_network_node_uplink(all_vlans)
+            
+            # Add VLANs to network node trunk port on physical switch (ens4)
             for vlan_id in all_vlans:
                 self._add_vlan_to_port('ens4', vlan_id)
             
@@ -304,6 +308,55 @@ class VLANTrunkManager:
             return True
         except Exception as e:
             logger.error(f"Error configuring worker {worker_ip} uplink: {e}")
+            return False
+    
+    def _configure_network_node_uplink(self, vlans):
+        """
+        Configure network node's br-provider uplink port (ens4) to allow VLANs
+        
+        Args:
+            vlans: Set of VLAN IDs to allow
+        
+        Returns:
+            bool: Success status
+        """
+        try:
+            network_node_ip = self.trunk_ports.get('ens4')  # Get network node IP
+            if not network_node_ip:
+                return False
+            
+            # Get current trunks on network node
+            cmd = "sudo ovs-vsctl get port ens4 trunks"
+            success, output = self.executor.execute_direct(network_node_ip, cmd, timeout=10)
+            
+            if not success:
+                logger.warning(f"Failed to get trunks for ens4 on network node {network_node_ip}")
+                return False
+            
+            # Parse current VLANs
+            current_vlans = self._parse_vlan_list(output)
+            
+            # Add new VLANs
+            updated = False
+            for vlan_id in vlans:
+                if vlan_id not in current_vlans:
+                    current_vlans.append(vlan_id)
+                    updated = True
+            
+            if updated:
+                current_vlans.sort()
+                vlans_str = ','.join(map(str, current_vlans))
+                cmd = f"sudo ovs-vsctl set port ens4 trunks={vlans_str}"
+                success, _ = self.executor.execute_direct(network_node_ip, cmd, timeout=10)
+                
+                if success:
+                    logger.info(f"Configured network node {network_node_ip} uplink ens4 with VLANs: {sorted(current_vlans)}")
+                
+                return success
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error configuring network node uplink: {e}")
             return False
     
     def remove_slice_vlans_from_trunks(self, slice_data):

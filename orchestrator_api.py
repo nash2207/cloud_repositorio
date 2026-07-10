@@ -493,6 +493,16 @@ class OrchestratorAPI:
             user["used_vms"] = max(0, user.get("used_vms", 0) - vm_count)
             self.db.update_user(username, user)
             
+            # Run infrastructure cleanup to sync VLAN trunks
+            logger.info("Running infrastructure cleanup after slice deletion...")
+            try:
+                from infrastructure_cleanup import InfrastructureCleanup
+                cleanup = InfrastructureCleanup(self.db, self.linux_executor, self.vlan_trunk_manager)
+                cleanup.cleanup_all()
+                logger.info("Infrastructure cleanup completed")
+            except Exception as e:
+                logger.warning(f"Infrastructure cleanup error: {e}")
+            
             logger.info(f"Slice {slice_id} deleted from {availability_zone} cluster")
             return True, "Slice deleted"
         except Exception as e:
