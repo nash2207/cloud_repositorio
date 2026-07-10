@@ -455,7 +455,13 @@ class OrchestratorAPI:
                 if availability_zone == "linux":
                     for vm_dict in slice_data.get("vms", []):
                         worker_ip = vm_dict.get("worker_ip")
+                        vm_id = vm_dict.get("vm_id")
+                        
+                        # Stop VM
                         compute_provider.stop_vm(worker_ip, vm_dict)
+                        
+                        # Cleanup TAP interfaces on worker
+                        self.vlan_trunk_manager.cleanup_worker_tap_interfaces(worker_ip, vm_id)
                     
                     # Cleanup VLANs on network node
                     vlan_list = []
