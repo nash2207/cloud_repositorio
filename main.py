@@ -131,6 +131,20 @@ def initialize_system():
     sync_manager = SyncManager(db, executor)
     sync_manager.sync_all_workers()
     
+    # Clean orphaned infrastructure before starting
+    logger.info("Cleaning orphaned VLAN configurations...")
+    try:
+        from infrastructure_cleanup import InfrastructureCleanup
+        from vlan_trunk_manager import VLANTrunkManager
+        
+        vlan_manager = VLANTrunkManager(executor, "10.0.0.7")
+        cleanup = InfrastructureCleanup(db, executor, vlan_manager)
+        cleanup.cleanup_all()
+        logger.info("Infrastructure cleanup completed")
+    except Exception as e:
+        logger.warning(f"Infrastructure cleanup error: {e}")
+        logger.warning("Continuing with startup...")
+    
     # Initialize monitoring system
     logger.info("Starting monitoring system...")
     # Only monitor enabled clusters (OpenStack disabled for now)

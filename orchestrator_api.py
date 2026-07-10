@@ -351,8 +351,8 @@ class OrchestratorAPI:
                         logger.error(f"Failed to configure VLAN {vlan_id}")
                         return False, f"Failed to configure VLAN {vlan_id}"
                 
-                # 2.5. Add VLANs to physical switch trunk ports
-                logger.info("Configuring physical switch VLAN trunks")
+                # 2.5. Add VLANs to trunk ports (only for workers hosting VMs)
+                logger.info("Configuring VLAN trunk ports for active workers")
                 self.vlan_trunk_manager.add_slice_vlans_to_trunks(slice_data)
                 
                 # 3. Create QCOW2 images and cloud-init seeds for all VMs
