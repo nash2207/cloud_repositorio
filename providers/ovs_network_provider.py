@@ -138,13 +138,18 @@ class OVSNetworkProvider(BaseNetworkProvider):
             """
             self.executor.execute_direct(self.network_node_ip, cmd4)
             
-            # Start dnsmasq (disable file logging to avoid permission issues)
+            # Start dnsmasq (disable DNS on port 53, only DHCP on port 67/68)
             logger.info(f"Starting dnsmasq in {ns_name} (range: {dhcp_range})")
             cmd5 = f"sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true"
             self.executor.execute_direct(self.network_node_ip, cmd5)
             
-            # Run dnsmasq in background (add & to make it non-blocking)
-            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=- &"
+            # Run dnsmasq in background with DNS disabled (--port=0)
+            # --port=0: Disable DNS server (no port 53 conflict)
+            # --dhcp-range: DHCP range and lease time
+            # --dhcp-option=3: Default gateway
+            # --dhcp-option=6: DNS server (Google DNS)
+            # --log-facility=-: Log to stderr (captured by systemd)
+            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --port=0 --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=- &"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
             
             # Wait a moment for dnsmasq to start

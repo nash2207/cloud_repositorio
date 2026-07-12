@@ -29,6 +29,10 @@
                 <p class="text-sm text-gray-400">Network Slice Orchestrator</p>
             </div>
             <div class="flex items-center gap-4">
+                <!-- User Management Button (Admin Only) -->
+                <button id="userMgmtBtn" onclick="openUserManagement()" class="hidden bg-green-600 hover:bg-green-700 px-4 py-2 rounded transition flex items-center gap-2">
+                    👥 Users
+                </button>
                 <!-- Monitoring Button (Admin Only) -->
                 <a href="/monitoring" id="monitoringBtn" class="hidden bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded transition flex items-center gap-2">
                     📊 Monitoring
@@ -41,6 +45,53 @@
             </div>
         </div>
     </header>
+
+    <!-- User Management Modal (Admin Only) -->
+    <div id="userManagementModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">👥 User Management</h2>
+                <button onclick="closeUserManagement()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+            </div>
+            
+            <!-- Create User Form -->
+            <div class="bg-gray-700 rounded-lg p-4 mb-4">
+                <h3 class="text-lg font-semibold mb-3">Create New User</h3>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Username</label>
+                        <input id="newUsername" type="text" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Password</label>
+                        <input id="newPassword" type="password" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Role</label>
+                        <select id="newRole" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-white">
+                            <option value="student">Student</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">VM Quota</label>
+                        <input id="newQuota" type="number" value="10" class="w-full bg-gray-600 border border-gray-500 rounded px-3 py-2 text-white">
+                    </div>
+                </div>
+                <button onclick="createUser()" class="mt-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition">
+                    Create User
+                </button>
+            </div>
+            
+            <!-- User List -->
+            <div>
+                <h3 class="text-lg font-semibold mb-3">Existing Users</h3>
+                <div id="userList" class="space-y-2">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Main Content -->
     <div class="flex h-screen" style="height: calc(100vh - 89px);">
@@ -635,9 +686,104 @@
             catch (err) { alert('Error: ' + err.message); }
         }
 
+        // ============= User Management Functions (Admin Only) =============
+        async function openUserManagement() {
+            document.getElementById('userManagementModal').classList.remove('hidden');
+            await loadUsers();
+        }
+
+        function closeUserManagement() {
+            document.getElementById('userManagementModal').classList.add('hidden');
+        }
+
+        async function loadUsers() {
+            try {
+                const data = await apiCall('/api/users');
+                const userList = document.getElementById('userList');
+                
+                if (data.users.length === 0) {
+                    userList.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">No users yet</p>';
+                    return;
+                }
+                
+                userList.innerHTML = data.users.map(user => `
+                    <div class="bg-gray-700 rounded p-3 flex justify-between items-center">
+                        <div>
+                            <p class="font-semibold">${user.username}</p>
+                            <p class="text-xs text-gray-400">
+                                Role: ${user.role} | Quota: ${user.used_vms}/${user.quota_vms} VMs | Slices: ${user.slices}
+                                ${user.openstack_provisioned ? ' | ☁️ OpenStack' : ''}
+                            </p>
+                        </div>
+                        <button onclick="deleteUser('${user.username}')" class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm transition">
+                            Delete
+                        </button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                alert('Error loading users: ' + err.message);
+            }
+        }
+
+        async function createUser() {
+            const username = document.getElementById('newUsername').value.trim();
+            const password = document.getElementById('newPassword').value;
+            const role = document.getElementById('newRole').value;
+            const quota = parseInt(document.getElementById('newQuota').value);
+            
+            if (!username || !password) {
+                alert('Username and password are required');
+                return;
+            }
+            
+            try {
+                await apiCall('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, role, quota_vms: quota })
+                });
+                
+                // Clear form
+                document.getElementById('newUsername').value = '';
+                document.getElementById('newPassword').value = '';
+                document.getElementById('newRole').value = 'student';
+                document.getElementById('newQuota').value = '10';
+                
+                await loadUsers();
+                alert(`User '${username}' created successfully!`);
+            } catch (err) {
+                alert('Error creating user: ' + err.message);
+            }
+        }
+
+        async function deleteUser(username) {
+            if (!confirm(`Delete user '${username}' and all their slices?`)) return;
+            
+            try {
+                await apiCall(`/api/users/${username}`, { method: 'DELETE' });
+                await loadUsers();
+                alert(`User '${username}' deleted successfully`);
+            } catch (err) {
+                alert('Error deleting user: ' + err.message);
+            }
+        }
+
+        // Show user management button for admin
+        async function checkAdminAccess() {
+            try {
+                const quotas = await apiCall('/api/quotas');
+                if (quotas.quota_vms >= 50) {
+                    document.getElementById('userMgmtBtn').classList.remove('hidden');
+                    document.getElementById('monitoringBtn').classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error('Error checking admin access:', err);
+            }
+        }
+
         document.getElementById('topoNumVMs').addEventListener('input', updateTopoDescription);
         document.getElementById('topoType').addEventListener('change', updateTopoDescription);
-        loadQuotas(); loadSlices();
+        loadQuotas(); loadSlices(); checkAdminAccess();
         setInterval(loadQuotas, 10000); setInterval(loadSlices, 10000);
     </script>
 </body>

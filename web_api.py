@@ -222,6 +222,102 @@ async def api_logout(request: Request, response: Response):
     response.delete_cookie("session_id")
     return {"success": True}
 
+# ============= User Management (Admin Only) =============
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "student"
+    quota_vms: int = 10
+
+@app.get("/api/users")
+async def api_get_users(request: Request):
+    """Get all users (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Return all users except admin
+    users = []
+    for username, data in db.data.get("users", {}).items():
+        if username != "admin":
+            users.append({
+                "username": username,
+                "role": data.get("role", "student"),
+                "quota_vms": data.get("quota_vms", 10),
+                "used_vms": data.get("used_vms", 0),
+                "slices": len(data.get("slices", [])),
+                "openstack_provisioned": "openstack" in data
+            })
+    
+    return {"users": users}
+
+@app.post("/api/users")
+async def api_create_user(user_req: CreateUserRequest, request: Request):
+    """Create new user with OpenStack provisioning (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Import user provisioning service
+    from user_provisioning import provision_user_with_openstack
+    
+    # Create user with OpenStack integration
+    success, result = provision_user_with_openstack(
+        db, 
+        user_req.username, 
+        user_req.password, 
+        user_req.role, 
+        user_req.quota_vms
+    )
+    
+    if success:
+        return {
+            "success": True, 
+            "username": user_req.username,
+            "openstack_provisioned": "openstack" in result
+        }
+    else:
+        raise HTTPException(status_code=400, detail=result)
+
+@app.delete("/api/users/{username}")
+async def api_delete_user(username: str, request: Request):
+    """Delete user (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if username == "admin":
+        raise HTTPException(status_code=400, detail="Cannot delete admin user")
+    
+    target_user = db.get_user(username)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete all slices first
+    for slice_id in target_user.get("slices", []):
+        orchestrator.delete_slice(username, slice_id)
+    
+    # Delete user
+    with db.lock:
+        del db.data["users"][username]
+        db.save()
+    
+    return {"success": True, "message": f"User {username} deleted"}
+
+# ============= Quota Management =============
+
 @app.get("/api/quotas")
 async def api_quotas(request: Request):
     user = verify_session(request)
