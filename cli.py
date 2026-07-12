@@ -9,10 +9,39 @@ from health_monitor import HealthMonitor
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Initialize database and executor
 db = Database()
 executor = RemoteExecutor()
 deployment = DeploymentAPI(executor, database=db)
-orchestrator = OrchestratorAPI(db, deployment)
+
+# Provider factory for CLI mode (Hexagonal Architecture)
+from providers.baremetal_provider import BareMetalComputeProvider
+from providers.ovs_network_provider import OVSNetworkProvider
+from vlan_trunk_manager import VLANTrunkManager
+
+clusters_config = db.data.get("clusters", {})
+linux_cluster = clusters_config.get("linux", {})
+
+# Instantiate and inject providers
+compute_provider = BareMetalComputeProvider(executor)
+network_provider = OVSNetworkProvider(
+    executor,
+    network_node_ip=linux_cluster.get("network_node", "10.0.0.1"),
+    bridge_name="br-provider"
+)
+vlan_manager = VLANTrunkManager(executor, "10.0.0.7")
+
+# Initialize orchestrator with dependency injection
+orchestrator = OrchestratorAPI(
+    db, 
+    deployment,
+    monitoring_system=None,  # CLI mode doesn't use monitoring
+    compute_provider=compute_provider,
+    network_provider=network_provider,
+    vlan_trunk_manager=vlan_manager,
+    clusters_config=clusters_config
+)
+
 monitor = HealthMonitor(db)
 
 class CLI:

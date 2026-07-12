@@ -19,6 +19,7 @@ from orchestrator_api import OrchestratorAPI
 from sync_manager import SyncManager
 from vnc_proxy import vnc_proxy_manager
 from monitoring.monitor import MonitoringSystem
+from vm_placement import VMPlacementGA
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,52 @@ def set_monitoring_system(ms):
     """Set the monitoring system instance from main.py"""
     global monitoring_system, orchestrator
     monitoring_system = ms
-    # Re-initialize orchestrator with monitoring system
-    orchestrator = OrchestratorAPI(db, deployment, monitoring_system)
+    
+    # Initialize orchestrator with injected providers (Hexagonal Architecture)
+    if not orchestrator:
+        from providers.baremetal_provider import BareMetalComputeProvider
+        from providers.ovs_network_provider import OVSNetworkProvider
+        from vlan_trunk_manager import VLANTrunkManager
+        
+        # Provider factory: decides which concrete implementations to use
+        clusters_config = db.data.get("clusters", {})
+        linux_cluster = clusters_config.get("linux", {})
+        
+        # Instantiate concrete providers based on configuration
+        compute_provider = BareMetalComputeProvider(executor)
+        network_provider = OVSNetworkProvider(
+            executor,
+            network_node_ip=linux_cluster.get("network_node", "10.0.0.1"),
+            bridge_name="br-provider"
+        )
+        vlan_manager = VLANTrunkManager(executor, "10.0.0.7")
+        
+        # Inject dependencies into orchestrator (follows Dependency Injection pattern)
+        orchestrator = OrchestratorAPI(
+            db, 
+            deployment, 
+            monitoring_system,
+            compute_provider=compute_provider,      # ← Injected
+            network_provider=network_provider,      # ← Injected
+            vlan_trunk_manager=vlan_manager,        # ← Injected
+            clusters_config=clusters_config
+        )
+        
+        logger.info("Orchestrator initialized with injected providers (Hexagonal Architecture)")
+    monitoring_system = ms
+    
+    # Re-initialize orchestrator with monitoring system (uses same injected providers)
+    if orchestrator:
+        orchestrator.monitoring_system = ms
+        
+        # Reinitialize GA with new monitoring system
+        if "linux" in orchestrator.clusters:
+            orchestrator.linux_placement_ga = VMPlacementGA(
+                ms,
+                orchestrator.clusters["linux"],
+                "linux"
+            )
+            logger.info("VM Placement GA reinitialized with monitoring system")
 sync_manager = SyncManager(db, executor)
 
 # Simple session storage (in production use Redis/JWT)

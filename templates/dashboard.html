@@ -483,12 +483,30 @@
         function highlightSelectedNodes() {
             if (!network) return;
             const nodes = network.body.data.nodes;
+            
             currentSliceData.vms.forEach(vm => {
                 const node = nodes.get(vm.vm_id);
-                if (selectedVMs.includes(vm.vm_id)) { node.borderWidth = 5; node.color = { background: '#10b981', border: '#fbbf24' }; }
-                else { node.borderWidth = 3; node.color = currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280'; }
+                if (selectedVMs.includes(vm.vm_id)) {
+                    // Highlighted: thick yellow border
+                    node.borderWidth = 6;
+                    node.color = {
+                        background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                        border: '#fbbf24',
+                        highlight: { background: '#10b981', border: '#fbbf24' }
+                    };
+                } else {
+                    // Normal: thin border
+                    node.borderWidth = 3;
+                    node.color = {
+                        background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                        border: '#ffffff'
+                    };
+                }
                 nodes.update(node);
             });
+            
+            // Force network redraw
+            network.redraw();
         }
 
         function updateSelectedVMsInfo() {

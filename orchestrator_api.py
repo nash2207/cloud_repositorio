@@ -2,9 +2,7 @@
 import logging
 import json
 from models import Slice, Link, Flavor, VM, Interface
-from providers.baremetal_provider import BareMetalComputeProvider
-from providers.openstack_provider import OpenStackComputeProvider
-from providers.ovs_network_provider import OVSNetworkProvider
+from providers.base_compute import BaseComputeProvider, BaseNetworkProvider
 from topology_generator import TopologyGenerator
 from vm_placement import VMPlacementGA
 from vlan_trunk_manager import VLANTrunkManager
@@ -14,17 +12,51 @@ logger = logging.getLogger(__name__)
 
 class OrchestratorAPI:
     """
-    Orchestrator with pluggable compute and network providers
-    Supports multi-cluster deployment with availability zones (Linux + OpenStack)
+    Orchestrator with pluggable compute and network providers (Hexagonal Architecture)
+    
+    Responsibilities:
+    - Slice lifecycle management (create, deploy, delete)
+    - VM placement optimization via GA
+    - Topology generation
+    - Provider orchestration (delegates infrastructure operations to injected providers)
+    
+    Compliance:
+    - Uses dependency injection for ALL infrastructure providers
+    - Depends only on abstract interfaces (BaseComputeProvider, BaseNetworkProvider)
+    - Zero knowledge of concrete provider implementations (BareMetalComputeProvider, etc.)
     """
     
-    def __init__(self, db, deployment_api, monitoring_system=None, compute_provider=None, network_provider=None):
+    def __init__(self, 
+                 db, 
+                 deployment_api, 
+                 monitoring_system=None,
+                 compute_provider: BaseComputeProvider = None,
+                 network_provider: BaseNetworkProvider = None,
+                 vlan_trunk_manager=None,
+                 clusters_config=None):
+        """
+        Initialize orchestrator with injected dependencies
+        
+        Args:
+            db: Database instance
+            deployment_api: Deployment API instance
+            monitoring_system: Optional monitoring system for telemetry
+            compute_provider: Injected compute provider (BareMetalComputeProvider, OpenStackComputeProvider, etc.)
+            network_provider: Injected network provider (OVSNetworkProvider, NeutronNetworkProvider, etc.)
+            vlan_trunk_manager: Optional VLAN trunk manager for physical switch configuration
+            clusters_config: Optional cluster configuration dict (defaults to database config)
+        """
         self.db = db
         self.deployment_api = deployment_api
-        self.monitoring_system = monitoring_system  # MonitoringSystem instance
+        self.monitoring_system = monitoring_system
         
-        # Multi-cluster configuration from database
-        self.clusters = db.data.get("clusters", {
+        # Injected providers (Hexagonal Architecture compliance)
+        self.compute_provider = compute_provider
+        self.network_provider = network_provider
+        self.vlan_trunk_manager = vlan_trunk_manager
+        
+        # Cluster configuration
+        self.clusters = clusters_config or db.data.get("clusters", {
             "linux": {
                 "bind_address": "10.0.0.6",
                 "network_node": "10.0.0.1",
@@ -35,63 +67,43 @@ class OrchestratorAPI:
         # Only include enabled clusters
         self.clusters = {k: v for k, v in self.clusters.items() if v is not None and isinstance(v, dict)}
         
-        # Initialize providers for each cluster
-        self.linux_executor = deployment_api.executor  # Reuse existing executor
-        self.linux_compute_provider = BareMetalComputeProvider(self.linux_executor)
-        self.linux_network_provider = OVSNetworkProvider(
-            self.linux_executor, 
-            network_node_ip=self.clusters["linux"]["network_node"],
-            bridge_name="br-provider"  # Use existing bridge on network node
-        )
-        
-        # OpenStack provider (DISABLED - will be implemented later)
-        self.openstack_compute_provider = None
-        
-        # Initialize VM Placement algorithms for enabled clusters only
-        if monitoring_system:
+        # Initialize VM Placement GA if monitoring is available
+        if monitoring_system and "linux" in self.clusters:
             self.linux_placement_ga = VMPlacementGA(
                 monitoring_system, 
                 self.clusters["linux"],
                 "linux"
             )
-            self.openstack_placement_ga = None  # Disabled
-            logger.info("VM Placement GA initialized for Linux cluster only")
+            logger.info("VM Placement GA initialized for Linux cluster")
         else:
             self.linux_placement_ga = None
-            self.openstack_placement_ga = None
             logger.warning("Monitoring system not provided - using fallback round-robin")
-        
-        # Initialize VLAN Trunk Manager for physical switch
-        physical_switch_ip = "10.0.0.7"  # ovs1
-        self.vlan_trunk_manager = VLANTrunkManager(self.linux_executor, physical_switch_ip)
-        logger.info(f"VLAN Trunk Manager initialized for physical switch {physical_switch_ip}")
         
         # Round-robin state per cluster (fallback if GA not available)
         self.round_robin_idx = {"linux": 0}
     
     def _get_cluster_config(self, availability_zone):
         """Get cluster configuration for given AZ"""
-        return self.clusters.get(availability_zone, self.clusters["linux"])
+        return self.clusters.get(availability_zone, self.clusters.get("linux", {}))
     
     def _get_compute_provider(self, availability_zone):
-        """Get compute provider for given AZ"""
-        if availability_zone == "openstack":
-            return self.openstack_compute_provider
-        else:
-            return self.linux_compute_provider
+        """Get compute provider for given AZ (uses injected provider)"""
+        # Return injected provider (infrastructure-agnostic)
+        return self.compute_provider
     
     def _get_network_provider(self, availability_zone):
-        """Get network provider for given AZ"""
-        # Currently only Linux cluster uses OVS network provider
-        # OpenStack uses Neutron (handled within OpenStack provider)
-        return self.linux_network_provider
+        """Get network provider for given AZ (uses injected provider)"""
+        # Return injected provider (infrastructure-agnostic)
+        return self.network_provider
     
     def _set_bind_address(self, availability_zone):
         """Set RemoteExecutor bind address for cluster"""
         cluster_config = self._get_cluster_config(availability_zone)
         bind_address = cluster_config.get("bind_address")
         if bind_address and availability_zone == "linux":
-            self.linux_executor.set_bind_address(bind_address)
+            # Access executor from deployment_api
+            if hasattr(self.deployment_api, 'executor'):
+                self.deployment_api.executor.set_bind_address(bind_address)
     
     def get_next_worker(self, availability_zone="linux"):
         """Round-robin worker selection for given cluster"""
