@@ -72,9 +72,19 @@ class OVSNetworkProvider(BaseNetworkProvider):
             base_ip = '.'.join(cidr.split('.')[0:3])
             mask = cidr.split('/')[1]
             
-            # Use .254 for DHCP server IP to avoid conflicts
-            dhcp_ip = f"{base_ip}.254"
-            dhcp_range = f"{base_ip}.10,{base_ip}.250"
+            # Special handling for VLAN 400 (internet)
+            if vlan_id == 400:
+                # VLAN 400: 10.60.8.128/25 range (.129 to .254)
+                # Gateway: 10.60.8.254 (external)
+                # DHCP server IP: 10.60.8.253 (internal on network node)
+                # DHCP range: 10.60.8.129 - 10.60.8.252
+                dhcp_ip = "10.60.8.253"
+                dhcp_range = "10.60.8.129,10.60.8.252"
+            else:
+                # Other VLANs: use standard configuration
+                # DHCP server on .254, range .10-.250
+                dhcp_ip = f"{base_ip}.254"
+                dhcp_range = f"{base_ip}.10,{base_ip}.250"
             
             # Create namespace
             logger.info(f"Creating namespace {ns_name}")

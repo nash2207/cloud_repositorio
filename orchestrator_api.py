@@ -326,11 +326,11 @@ class OrchestratorAPI:
                 )
                 
                 if has_internet:
-                    logger.info("Configuring DHCP for VLAN 400 (gateway 10.60.7.1 already exists)")
+                    logger.info("Configuring DHCP for VLAN 400 (IP range: 10.60.8.129-254, gateway: 10.60.8.254)")
                     network_provider.delete_network(400)  # Cleanup previous
                     success = network_provider.create_network(
-                        400, "10.60.7.0/24", "10.60.7.1", 
-                        dhcp_enabled=True, create_gateway=False
+                        400, "10.60.8.128/25", "10.60.8.254", 
+                        dhcp_enabled=True, create_gateway=False  # Gateway already exists externally
                     )
                     if not success:
                         logger.error("Failed to configure DHCP for VLAN 400")
