@@ -241,7 +241,7 @@
                 <div class="mb-4" id="editVMInternetBlock">
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" id="editVMInternet" class="w-4 h-4">
-                        <span class="text-sm">Enable Internet (VLAN 100)</span>
+                        <span class="text-sm">Enable Internet (VLAN 400)</span>
                     </label>
                     <p class="text-xs text-yellow-400 mt-1">⚠️ Only editable in design state</p>
                 </div>
@@ -503,7 +503,10 @@
             document.getElementById('editVMStatus').className = `status-badge status-${vm.status || 'design'}`;
             document.getElementById('editVMWorker').textContent = vm.worker_ip || 'Not assigned';
             document.getElementById('editVMVNC').textContent = vm.vnc_port ? `${vm.vnc_port}` : 'Not assigned';
-            document.getElementById('editVMInternet').checked = vm.interfaces.some(iface => iface.vlan_id === 100);
+            
+            // Check if VM has internet (VLAN 400 on ens3)
+            const hasInternet = vm.interfaces.some(iface => iface.vlan_id === 400);
+            document.getElementById('editVMInternet').checked = hasInternet;
             document.getElementById('editVMInternet').disabled = !isDesign;
             document.getElementById('updateVMBtn').disabled = !isDesign;
             
