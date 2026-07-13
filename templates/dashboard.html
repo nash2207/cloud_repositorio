@@ -341,7 +341,18 @@
     </div>
 
     <script>
-        let network = null, currentSliceId = null, currentSliceData = null, deployInterval = null, linkMode = false, selectedVMs = [], allSlices = [];
+        let network = null, currentSliceId = null, currentSliceData = null, deployInterval = null, selectedVMs = [], allSlices = [];
+        
+        // linkMode with logging to track changes
+        let _linkMode = false;
+        Object.defineProperty(window, 'linkMode', {
+            get: function() { return _linkMode; },
+            set: function(value) {
+                console.log(`🔴 linkMode changed from ${_linkMode} to ${value}`);
+                console.trace();
+                _linkMode = value;
+            }
+        });
 
         async function apiCall(url, opts = {}) { 
             const res = await fetch(url, { ...opts, credentials: 'include' }); 
