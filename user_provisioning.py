@@ -49,6 +49,8 @@ class UserProvisioningService:
         """
         Create user in local system and provision OpenStack tenant
         
+        IMPORTANT: If OpenStack provisioning fails, user creation is rolled back
+        
         Args:
             username: Local username
             password: Local password (hashed before storage)
@@ -67,7 +69,7 @@ class UserProvisioningService:
             # Hash local password
             password_hash = hashlib.sha256(password.encode()).hexdigest()
             
-            # Create local user
+            # Create local user data structure
             user_data = {
                 "username": username,
                 "password_hash": password_hash,
@@ -77,7 +79,7 @@ class UserProvisioningService:
                 "slices": []
             }
             
-            # Provision OpenStack tenant if enabled
+            # Provision OpenStack tenant if enabled (REQUIRED - fail if it fails)
             if self.openstack_enabled and self.keystone_client:
                 logger.info(f"Provisioning OpenStack tenant for user '{username}'...")
                 
@@ -97,10 +99,13 @@ class UserProvisioningService:
                     }
                     logger.info(f"OpenStack tenant provisioned: project={result['project_name']}, user_id={result['user_id']}")
                 else:
-                    logger.warning(f"OpenStack provisioning failed: {result}")
-                    logger.warning("User created locally without OpenStack tenant")
+                    # ROLLBACK: Do not create user if OpenStack provisioning fails
+                    error_msg = f"OpenStack provisioning failed: {result}"
+                    logger.error(error_msg)
+                    logger.error(f"User '{username}' creation aborted (OpenStack integration required)")
+                    return False, f"User creation failed: {error_msg}"
             
-            # Save user to database
+            # Save user to database only if OpenStack provisioning succeeded (or is disabled)
             self.db.add_user(user_data)
             
             logger.info(f"User '{username}' created successfully (role={role}, quota={quota_vms} VMs)")

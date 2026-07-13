@@ -44,45 +44,105 @@ class KeystoneClient:
         Returns:
             Tuple[bool, str]: (success, token) or (False, error_message)
         """
-        try:
-            url = f"{self.keystone_url}/v3/auth/tokens"
-            payload = {
-                "auth": {
-                    "identity": {
-                        "methods": ["password"],
-                        "password": {
-                            "user": {
-                                "name": self.admin_user,
-                                "domain": {"name": "Default"},
-                                "password": self.admin_password
-                            }
+        url = f"{self.keystone_url}/v3/auth/tokens"
+        payload = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": self.admin_user,
+                            "domain": {"name": "Default"},
+                            "password": self.admin_password
                         }
-                    },
-                    "scope": {
-                        "system": {"all": True}
                     }
+                },
+                "scope": {
+                    "system": {"all": True}
                 }
             }
-            
+        }
+        
+        # Log request details (mask password)
+        logger.info("=" * 80)
+        logger.info("KEYSTONE AUTHENTICATION REQUEST")
+        logger.info(f"URL: {url}")
+        logger.info(f"Method: POST")
+        logger.info(f"User: {self.admin_user}")
+        logger.info(f"Domain: Default")
+        logger.info(f"Scope: system (all=True)")
+        logger.info(f"Timeout: 30 seconds")
+        
+        try:
+            logger.info("Sending authentication request...")
             response = requests.post(url, json=payload, timeout=30)
+            
+            logger.info(f"Response Status Code: {response.status_code}")
+            logger.info(f"Response Headers: {dict(response.headers)}")
             
             if response.status_code == 201:
                 token = response.headers.get('X-Subject-Token')
                 self.admin_token = token
-                logger.info(f"Admin authentication successful")
+                logger.info(f"✓ Admin authentication successful")
+                logger.info(f"✓ Token obtained: {token[:50]}..." if token else "✗ No token in response")
+                logger.info("=" * 80)
                 return True, token
             else:
-                error_msg = f"Admin authentication failed: HTTP {response.status_code}"
-                logger.error(error_msg)
+                logger.error(f"✗ Admin authentication failed: HTTP {response.status_code}")
+                logger.error(f"Response Body: {response.text}")
+                logger.info("=" * 80)
+                error_msg = f"Admin authentication failed: HTTP {response.status_code} - {response.text}"
                 return False, error_msg
                 
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Admin authentication connection error: {e}"
-            logger.error(error_msg)
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"✗ Connection Error: Cannot connect to {url}")
+            logger.error(f"Error Type: ConnectionError")
+            logger.error(f"Error Details: {str(e)}")
+            logger.error("Possible causes:")
+            logger.error("  1. Keystone service is not running")
+            logger.error("  2. Wrong hostname/IP (check DNS: controller -> IP)")
+            logger.error("  3. Wrong port (check Keystone is on port 5000)")
+            logger.error("  4. Network routing issue")
+            logger.error("  5. Firewall blocking connection")
+            logger.info("=" * 80)
+            logger.info("DEBUG COMMANDS:")
+            logger.info(f"  ping controller")
+            logger.info(f"  curl -v {url}")
+            logger.info(f"  telnet controller 5000")
+            logger.info(f"  sudo systemctl status apache2  # On OpenStack controller")
+            logger.info("=" * 80)
+            error_msg = f"Connection refused: {e}"
             return False, error_msg
+            
+        except requests.exceptions.Timeout as e:
+            logger.error(f"✗ Timeout Error: Request took longer than 30 seconds")
+            logger.error(f"Error Details: {str(e)}")
+            logger.error("Possible causes:")
+            logger.error("  1. Keystone service is slow/overloaded")
+            logger.error("  2. Network latency issue")
+            logger.error("  3. Keystone database connection issue")
+            logger.info("=" * 80)
+            logger.info("DEBUG COMMANDS:")
+            logger.info(f"  time curl -v {url}")
+            logger.info(f"  # On OpenStack controller:")
+            logger.info(f"  sudo systemctl status apache2")
+            logger.info(f"  sudo tail -f /var/log/apache2/keystone.log")
+            logger.info("=" * 80)
+            error_msg = f"Timeout after 30 seconds: {e}"
+            return False, error_msg
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"✗ Request Exception: {type(e).__name__}")
+            logger.error(f"Error Details: {str(e)}")
+            logger.info("=" * 80)
+            error_msg = f"Request error: {e}"
+            return False, error_msg
+            
         except Exception as e:
-            error_msg = f"Admin authentication error: {e}"
-            logger.error(error_msg)
+            logger.error(f"✗ Unexpected Error: {type(e).__name__}")
+            logger.error(f"Error Details: {str(e)}")
+            logger.info("=" * 80)
+            error_msg = f"Unexpected error: {e}"
             return False, error_msg
     
     def create_project(self, project_name, description=""):
@@ -98,6 +158,7 @@ class KeystoneClient:
         """
         try:
             if not self.admin_token:
+                logger.info("No admin token found, authenticating...")
                 success, result = self.get_admin_token()
                 if not success:
                     return False, f"Cannot get admin token: {result}"
@@ -113,11 +174,16 @@ class KeystoneClient:
                 }
             }
             
+            logger.info(f"Creating project: {project_name}")
+            logger.info(f"URL: {url}")
+            
             response = requests.post(url, json=payload, headers=headers, timeout=30)
+            
+            logger.info(f"Project creation response: HTTP {response.status_code}")
             
             if response.status_code == 201:
                 project_id = response.json()['project']['id']
-                logger.info(f"Project '{project_name}' created: {project_id}")
+                logger.info(f"✓ Project '{project_name}' created: {project_id}")
                 return True, project_id
             elif response.status_code == 409:
                 # Project already exists, get its ID

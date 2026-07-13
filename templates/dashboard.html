@@ -470,12 +470,22 @@
             
             // Single click for link mode selection
             network.on('click', (params) => { 
-                if (params.nodes.length > 0) {
-                    if (linkMode) {
-                        // Prevent vis.js from handling selection
-                        network.unselectAll();
-                        handleNodeClickForLink(params.nodes[0]);
-                    }
+                if (params.nodes.length > 0 && linkMode) {
+                    // Handle link mode selection
+                    handleNodeClickForLink(params.nodes[0]);
+                    // Immediately clear vis.js selection to prevent interference
+                    setTimeout(() => network.unselectAll(), 0);
+                } else if (params.nodes.length === 0 && linkMode) {
+                    // Clicked on empty space - don't deselect our custom selection
+                    setTimeout(() => network.unselectAll(), 0);
+                }
+            });
+            
+            // Prevent vis.js from handling selection during link mode
+            network.on('selectNode', (params) => {
+                if (linkMode) {
+                    // Immediately deselect to prevent vis.js interference
+                    setTimeout(() => network.unselectAll(), 0);
                 }
             });
         }
@@ -493,6 +503,9 @@
             
             // Get nodes data
             const nodesDataSet = network.body.data.nodes;
+            
+            // Clear vis.js internal selection first
+            network.unselectAll();
             
             // Update each VM node
             currentSliceData.vms.forEach(vm => {
@@ -534,8 +547,8 @@
                 }
             });
             
-            // Deselect all nodes in vis.js (prevent default selection styling)
-            network.unselectAll();
+            // Force network redraw to apply changes immediately
+            network.redraw();
         }
 
         function updateSelectedVMsInfo() {
