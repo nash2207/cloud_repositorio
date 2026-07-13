@@ -95,7 +95,7 @@ class DeploymentAPI:
             # Don't create QCOW2 yet if worker is not assigned - defer until deployment
             if worker_ip != "PENDING" and image_path:
                 success, qcow_img = self.qcow_mgr.create_backing_image(
-                    worker_ip, vm_name, image_path, []
+                    worker_ip, slice_id, vm_id, vm_name, image_path, []
                 )
                 if not success:
                     logger.error(f"Failed to create QCOW2 image for {vm_name}")

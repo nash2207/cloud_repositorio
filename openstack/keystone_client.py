@@ -470,3 +470,80 @@ class KeystoneClient:
             error_msg = f"Tenant provisioning error: {e}"
             logger.error(error_msg)
             return False, error_msg
+
+    
+    def delete_user(self, user_id):
+        """
+        Delete user from OpenStack
+        
+        Args:
+            user_id: User ID to delete
+        
+        Returns:
+            Tuple[bool, str]: (success, None) or (False, error_message)
+        """
+        try:
+            if not self.admin_token:
+                success, result = self.get_admin_token()
+                if not success:
+                    return False, f"Cannot get admin token: {result}"
+            
+            url = f"{self.keystone_url}/v3/users/{user_id}"
+            headers = {"X-Auth-Token": self.admin_token}
+            
+            logger.info(f"Deleting user: {user_id}")
+            response = requests.delete(url, headers=headers, timeout=30)
+            
+            if response.status_code == 204:
+                logger.info(f"✓ User {user_id} deleted from OpenStack")
+                return True, None
+            elif response.status_code == 404:
+                logger.warning(f"User {user_id} not found in OpenStack (already deleted?)")
+                return True, None
+            else:
+                error_msg = f"User deletion failed: HTTP {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                return False, error_msg
+                
+        except Exception as e:
+            error_msg = f"User deletion error: {e}"
+            logger.error(error_msg)
+            return False, error_msg
+    
+    def delete_project(self, project_id):
+        """
+        Delete project from OpenStack
+        
+        Args:
+            project_id: Project ID to delete
+        
+        Returns:
+            Tuple[bool, str]: (success, None) or (False, error_message)
+        """
+        try:
+            if not self.admin_token:
+                success, result = self.get_admin_token()
+                if not success:
+                    return False, f"Cannot get admin token: {result}"
+            
+            url = f"{self.keystone_url}/v3/projects/{project_id}"
+            headers = {"X-Auth-Token": self.admin_token}
+            
+            logger.info(f"Deleting project: {project_id}")
+            response = requests.delete(url, headers=headers, timeout=30)
+            
+            if response.status_code == 204:
+                logger.info(f"✓ Project {project_id} deleted from OpenStack")
+                return True, None
+            elif response.status_code == 404:
+                logger.warning(f"Project {project_id} not found in OpenStack (already deleted?)")
+                return True, None
+            else:
+                error_msg = f"Project deletion failed: HTTP {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                return False, error_msg
+                
+        except Exception as e:
+            error_msg = f"Project deletion error: {e}"
+            logger.error(error_msg)
+            return False, error_msg

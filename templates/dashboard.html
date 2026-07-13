@@ -18,6 +18,24 @@
         .status-provisioning { background: #f59e0b; animation: pulse 1s infinite; }
         .status-deployed { background: #10b981; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        
+        /* Toast notifications */
+        #toastContainer { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 400px; }
+        .toast { padding: 16px 20px; border-radius: 8px; color: white; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); animation: slideIn 0.3s ease-out; display: flex; align-items: center; gap: 12px; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+        .toast.warning { background: #f59e0b; }
+        .toast.info { background: #3b82f6; }
+        .toast-close { cursor: pointer; opacity: 0.7; font-size: 18px; line-height: 1; }
+        .toast-close:hover { opacity: 1; }
+        @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(400px); opacity: 0; } }
+        .toast.removing { animation: slideOut 0.3s ease-in; }
+        
+        /* Progress bar */
+        #deployProgress { position: fixed; bottom: 0; left: 0; right: 0; z-index: 9998; background: #1f2937; border-top: 2px solid #374151; padding: 16px 24px; transform: translateY(100%); transition: transform 0.3s ease; }
+        #deployProgress.active { transform: translateY(0); }
+        .progress-bar-fill { height: 8px; background: linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius: 4px; transition: width 0.3s ease; }
     </style>
 </head>
 <body class="bg-gray-900 text-white">
@@ -369,6 +387,73 @@
                 _linkMode = value;
             }
         });
+        
+        // ===== TOAST NOTIFICATIONS =====
+        function showToast(message, type = 'info', duration = 4000) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            const icons = {
+                success: '✓',
+                error: '✗',
+                warning: '⚠',
+                info: 'ℹ'
+            };
+            
+            toast.innerHTML = `
+                <span style="font-size: 20px;">${icons[type] || 'ℹ'}</span>
+                <span style="flex: 1;">${message}</span>
+                <span class="toast-close" onclick="closeToast(this.parentElement)">×</span>
+            `;
+            
+            container.appendChild(toast);
+            
+            // Auto-remove after duration
+            if (duration > 0) {
+                setTimeout(() => closeToast(toast), duration);
+            }
+            
+            return toast;
+        }
+        
+        function closeToast(toast) {
+            if (!toast || !toast.parentElement) return;
+            toast.classList.add('removing');
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.parentElement.removeChild(toast);
+                }
+            }, 300);
+        }
+        
+        // ===== DEPLOY PROGRESS BAR =====
+        function showDeployProgress(text = 'Deploying slice...', percent = 0) {
+            const progress = document.getElementById('deployProgress');
+            const progressText = document.getElementById('deployProgressText');
+            const progressPercent = document.getElementById('deployProgressPercent');
+            const progressBar = document.getElementById('deployProgressBar');
+            
+            progress.classList.add('active');
+            progressText.textContent = text;
+            progressPercent.textContent = `${percent}%`;
+            progressBar.style.width = `${percent}%`;
+        }
+        
+        function updateDeployProgress(text, percent) {
+            const progressText = document.getElementById('deployProgressText');
+            const progressPercent = document.getElementById('deployProgressPercent');
+            const progressBar = document.getElementById('deployProgressBar');
+            
+            progressText.textContent = text;
+            progressPercent.textContent = `${percent}%`;
+            progressBar.style.width = `${percent}%`;
+        }
+        
+        function hideDeployProgress() {
+            const progress = document.getElementById('deployProgress');
+            progress.classList.remove('active');
+        }
 
         async function apiCall(url, opts = {}) { 
             const res = await fetch(url, { ...opts, credentials: 'include' }); 
@@ -759,9 +844,9 @@
                 console.log('Event propagation stopped');
             }
             
-            if (!currentSliceId || currentSliceData.status !== 'design') { 
-                alert('Can only create links in design state'); 
-                console.log('Cannot start link mode: wrong state');
+            if (!currentSliceId) { 
+                showToast('Please select a slice first', 'error');
+                console.log('Cannot start link mode: no slice selected');
                 return; 
             }
             
@@ -783,6 +868,11 @@
             
             updateSelectedVMsInfo();
             document.getElementById('confirmLinkBtn2').disabled = true;
+            
+            const isDeployed = currentSliceData && currentSliceData.status === 'deployed';
+            if (isDeployed) {
+                showToast('⚠️ Slice is deployed - VMs will be rebooted when link is created', 'warning');
+            }
             
             console.log('✓ Link mode started - Click on VMs to select them');
             console.log('✓ Banner shown, linkMode =', linkMode);
@@ -1104,5 +1194,19 @@
         loadQuotas(); loadSlices(); checkAdminAccess();
         setInterval(loadQuotas, 10000); setInterval(loadSlices, 10000);
     </script>
+    
+    <!-- Toast Container -->
+    <div id="toastContainer"></div>
+    
+    <!-- Deploy Progress Bar -->
+    <div id="deployProgress">
+        <div class="flex justify-between items-center mb-2">
+            <span id="deployProgressText" class="text-sm font-semibold">Deploying slice...</span>
+            <span id="deployProgressPercent" class="text-sm text-gray-400">0%</span>
+        </div>
+        <div class="w-full bg-gray-700 rounded-full h-2">
+            <div id="deployProgressBar" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+    </div>
 </body>
 </html>

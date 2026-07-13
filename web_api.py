@@ -334,7 +334,7 @@ async def api_create_user(user_req: CreateUserRequest, request: Request):
 
 @app.delete("/api/users/{username}")
 async def api_delete_user(username: str, request: Request):
-    """Delete user (admin only)"""
+    """Delete user (admin only) - syncs with OpenStack"""
     user = verify_session(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -350,15 +350,49 @@ async def api_delete_user(username: str, request: Request):
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    logger.info(f"Deleting user {username} - syncing with OpenStack")
+    
     # Delete all slices first
     for slice_id in target_user.get("slices", []):
         orchestrator.delete_slice(username, slice_id)
     
-    # Delete user
+    # Delete from OpenStack if provisioned
+    if "openstack" in target_user:
+        try:
+            from openstack.keystone_client import KeystoneClient
+            
+            openstack_config = db.data.get("openstack", {})
+            keystone = KeystoneClient(
+                auth_url=openstack_config.get("keystone_url"),
+                admin_username=openstack_config.get("admin_username"),
+                admin_password=openstack_config.get("admin_password"),
+                admin_project=openstack_config.get("admin_project", "admin")
+            )
+            
+            openstack_data = target_user["openstack"]
+            project_id = openstack_data.get("project_id")
+            user_id = openstack_data.get("user_id")
+            
+            # Delete OpenStack user
+            if user_id:
+                keystone.delete_user(user_id)
+                logger.info(f"Deleted OpenStack user {user_id} for {username}")
+            
+            # Delete OpenStack project
+            if project_id:
+                keystone.delete_project(project_id)
+                logger.info(f"Deleted OpenStack project {project_id} for {username}")
+            
+        except Exception as e:
+            logger.error(f"Error deleting from OpenStack: {e}")
+            # Continue with local deletion even if OpenStack fails
+    
+    # Delete user from local database
     with db.lock:
         del db.data["users"][username]
         db.save()
     
+    logger.info(f"User {username} deleted successfully")
     return {"success": True, "message": f"User {username} deleted"}
 
 # ============= Quota Management =============
