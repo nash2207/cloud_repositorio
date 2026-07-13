@@ -638,31 +638,34 @@ class OrchestratorAPI:
                     })
             
             if vms_to_place:
-                logger.info(f"Calculating placement for {len(vms_to_place)} VMs using GA...")
-                
-                # Get appropriate GA for this cluster
-                placement_ga = self.linux_placement_ga if availability_zone == "linux" else self.openstack_placement_ga
-                
-                if placement_ga and self.monitoring_system:
-                    # Use Genetic Algorithm for optimal placement
-                    placement, explanation = placement_ga.calculate_placement(vms_to_place)
-                    logger.info(f"GA Placement result: {placement}")
-                    logger.info(explanation)
-                    
-                    # Apply placement to VMs
-                    for vm_dict in slice_data.get("vms", []):
-                        if vm_dict['vm_id'] in placement:
-                            vm_dict['worker_ip'] = placement[vm_dict['vm_id']]
-                            logger.info(f"VM {vm_dict['vm_id']} assigned to worker {vm_dict['worker_ip']}")
+                # OpenStack uses Nova scheduler - skip GA placement
+                if availability_zone == "openstack":
+                    logger.info(f"OpenStack cluster: Nova scheduler will handle placement for {len(vms_to_place)} VMs")
+                    # For OpenStack, worker_ip stays as "PENDING" - Nova decides during deployment
                 else:
-                    # Fallback to round-robin if GA not available
-                    logger.warning("GA not available, using round-robin fallback")
-                    for vm_dict in slice_data.get("vms", []):
-                        if vm_dict.get("worker_ip") == "PENDING":
-                            vm_dict['worker_ip'] = self.get_next_worker(availability_zone)
-                
-                # Save updated placement
-                self.db.update_slice(slice_id, slice_data)
+                    # Linux cluster: Use GA for placement
+                    logger.info(f"Calculating placement for {len(vms_to_place)} VMs using GA...")
+                    
+                    if self.linux_placement_ga and self.monitoring_system:
+                        # Use Genetic Algorithm for optimal placement
+                        placement, explanation = self.linux_placement_ga.calculate_placement(vms_to_place)
+                        logger.info(f"GA Placement result: {placement}")
+                        logger.info(explanation)
+                        
+                        # Apply placement to VMs
+                        for vm_dict in slice_data.get("vms", []):
+                            if vm_dict['vm_id'] in placement:
+                                vm_dict['worker_ip'] = placement[vm_dict['vm_id']]
+                                logger.info(f"VM {vm_dict['vm_id']} assigned to worker {vm_dict['worker_ip']}")
+                    else:
+                        # Fallback to round-robin if GA not available
+                        logger.warning("GA not available, using round-robin fallback")
+                        for vm_dict in slice_data.get("vms", []):
+                            if vm_dict.get("worker_ip") == "PENDING":
+                                vm_dict['worker_ip'] = self.get_next_worker(availability_zone)
+                    
+                    # Save updated placement
+                    self.db.update_slice(slice_id, slice_data)
             
             # === PHASE 2: Deploy Infrastructure ===
             # LINUX CLUSTER DEPLOYMENT
