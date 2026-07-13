@@ -146,10 +146,181 @@ class OrchestratorAPI:
             logger.error(f"Slice creation error: {e}")
             return False, str(e)
     
-    def add_vm_to_slice(self, username, slice_id, vm_name, flavor_name, internet_enabled=False):
+    def _place_single_vm(self, slice_id, flavor_name, availability_zone):
+        """
+        Place a single VM on a worker (for live editing)
+        
+        Returns:
+            str: Worker IP or None if placement fails
+        """
+        try:
+            from models import Flavor
+            flavor_spec = Flavor.get(flavor_name)
+            if not flavor_spec:
+                logger.error(f"Unknown flavor: {flavor_name}")
+                return None
+            
+            # Get available workers
+            cluster_config = self.clusters.get(availability_zone, {})
+            workers = cluster_config.get("workers", [])
+            
+            if not workers:
+                logger.error(f"No workers found in cluster {availability_zone}")
+                return None
+            
+            # Simple round-robin placement for single VM
+            # TODO: Use monitoring data for better placement
+            slice_data = self.db.get_slice(str(slice_id))
+            existing_vms = slice_data.get("vms", [])
+            
+            # Find worker with fewest VMs from this slice
+            worker_vm_count = {w: 0 for w in workers}
+            for vm in existing_vms:
+                worker = vm.get("worker_ip")
+                if worker and worker in worker_vm_count:
+                    worker_vm_count[worker] += 1
+            
+            # Choose worker with minimum VMs
+            selected_worker = min(worker_vm_count.items(), key=lambda x: x[1])[0]
+            
+            logger.info(f"Single VM placement: selected worker {selected_worker}")
+            return selected_worker
+            
+        except Exception as e:
+            logger.error(f"Single VM placement error: {e}")
+            return None
+    
+    def _deploy_single_vm(self, slice_id, vm_dict):
+        """
+        Deploy a single VM (for live editing)
+        
+        Returns:
+            bool: True if deployment successful
+        """
+        try:
+            vm_id = vm_dict["vm_id"]
+            worker_ip = vm_dict["worker_ip"]
+            
+            logger.info(f"Deploying single VM {vm_id} on {worker_ip}")
+            
+            # Deploy using compute provider
+            success = self.compute_provider.launch_vm(worker_ip, vm_dict)
+            
+            if success:
+                # Update VM status
+                slice_data = self.db.get_slice(str(slice_id))
+                for vm in slice_data.get("vms", []):
+                    if vm["vm_id"] == vm_id:
+                        vm["status"] = "deployed"
+                        break
+                self.db.update_slice(slice_id, slice_data)
+                logger.info(f"VM {vm_id} deployed successfully")
+                return True
+            else:
+                logger.error(f"Failed to deploy VM {vm_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Single VM deployment error: {e}")
+            return False
+    
+    def _reboot_vm(self, vm_dict):
+        """
+        Reboot a VM to apply new configuration (for live editing)
+        
+        Args:
+            vm_dict: VM dictionary containing vm_id, worker_ip, interfaces, etc.
+        
+        Returns:
+            bool: True if reboot successful
+        """
+        import time
+        
+        try:
+            vm_id = vm_dict["vm_id"]
+            vm_name = vm_dict["name"]
+            worker_ip = vm_dict["worker_ip"]
+            
+            logger.info(f"LIVE EDIT: Rebooting VM {vm_id} ({vm_name}) on {worker_ip}")
+            
+            # Step 1: Stop the VM
+            logger.info(f"Stopping VM {vm_id}...")
+            stop_success = self.compute_provider.stop_vm(worker_ip, vm_dict)
+            
+            if not stop_success:
+                logger.error(f"Failed to stop VM {vm_id} during reboot")
+                return False
+            
+            # Step 2: Wait briefly for cleanup
+            logger.info(f"Waiting 3 seconds for VM {vm_id} cleanup...")
+            time.sleep(3)
+            
+            # Step 3: Restart the VM
+            logger.info(f"Restarting VM {vm_id}...")
+            start_success, pid = self.compute_provider.launch_vm(worker_ip, vm_dict)
+            
+            if start_success:
+                # Update VM status in database
+                vm_dict["status"] = "deployed"
+                if pid:
+                    vm_dict["pid"] = pid
+                logger.info(f"VM {vm_id} rebooted successfully with PID {pid}")
+                return True
+            else:
+                logger.error(f"Failed to restart VM {vm_id} during reboot")
+                vm_dict["status"] = "error"
+                return False
+                
+        except Exception as e:
+            logger.error(f"VM reboot error: {e}")
+            return False
+    
+    def _get_next_vm_name(self, slice_data, base_name):
+        """
+        Get next available VM name in a slice by finding existing names with the same base
+        
+        Args:
+            slice_data: Slice dict
+            base_name: Base name for VM (e.g., "vm", "router", "server")
+        
+        Returns:
+            str: Next available name (e.g., "vm4" if vm1, vm2, vm3 exist)
+        
+        Example:
+            If slice has: vm1, vm2, vm3
+            _get_next_vm_name(slice, "vm") returns "vm4"
+        """
+        import re
+        
+        existing_vms = slice_data.get("vms", [])
+        
+        # Find all VMs with names matching the pattern: base_name + number
+        pattern = re.compile(f"^{re.escape(base_name)}(\\d+)$")
+        existing_numbers = []
+        
+        for vm in existing_vms:
+            vm_name = vm.get("name", "")
+            match = pattern.match(vm_name)
+            if match:
+                existing_numbers.append(int(match.group(1)))
+        
+        # Find the next available number
+        if not existing_numbers:
+            next_number = 1
+        else:
+            next_number = max(existing_numbers) + 1
+        
+        return f"{base_name}{next_number}"
+    
+    def add_vm_to_slice(self, username, slice_id, vm_name, flavor_name, internet_enabled=False, auto_name=False):
         """
         Add VM to slice with only management interface (dynamic interfaces added via links)
         Worker placement deferred until deployment (batch placement via GA)
+        
+        Args:
+            auto_name: If True, automatically find next available name using vm_name as base
+        
+        LIVE EDIT: If slice is deployed, VM will be immediately deployed after creation
         """
         user = self.db.get_user(username)
         slice_data = self.db.get_slice(str(slice_id))
@@ -160,20 +331,33 @@ class OrchestratorAPI:
         if slice_data.get("owner") != username:
             return False, "Not authorized"
         
-        if slice_data.get("status") != "design":
-            return False, "Cannot add VMs to deployed slice"
+        # LIVE EDIT: Allow adding VMs to deployed slices
+        is_deployed = slice_data.get("status") == "deployed"
         
         if (user.get("used_vms", 0) + 1) > user.get("quota_vms", 10):
             return False, "Quota exceeded"
         
         try:
+            # Auto-generate next available name if requested
+            if auto_name:
+                vm_name = self._get_next_vm_name(slice_data, vm_name)
+                logger.info(f"Auto-generated VM name: {vm_name}")
+            
             vm_id = self.db.get_next_vm_id()
             availability_zone = slice_data.get("availability_zone", "linux")
             
-            # Worker placement deferred - will be calculated during deployment
-            worker_ip = "PENDING"  # Placeholder
+            # Worker placement
+            if is_deployed:
+                # LIVE EDIT: Place VM immediately for deployed slice
+                worker_ip = self._place_single_vm(slice_id, flavor_name, availability_zone)
+                if not worker_ip:
+                    return False, "No available worker found"
+                logger.info(f"LIVE EDIT: Placing VM {vm_id} on {worker_ip}")
+            else:
+                # Design mode: defer placement
+                worker_ip = "PENDING"
             
-            # Create VM with only management interface
+            # Create VM
             success, vm = self.deployment_api.create_vm_with_qcow(
                 slice_id, vm_id, vm_name, username, worker_ip, flavor_name, internet_enabled
             )
@@ -188,9 +372,18 @@ class OrchestratorAPI:
             user["used_vms"] = user.get("used_vms", 0) + 1
             self.db.update_user(username, user)
             
+            # LIVE EDIT: Deploy VM immediately if slice is deployed
+            if is_deployed:
+                logger.info(f"LIVE EDIT: Deploying VM {vm_id} immediately")
+                deploy_success = self._deploy_single_vm(slice_id, vm.to_dict())
+                if not deploy_success:
+                    logger.error(f"LIVE EDIT: Failed to deploy VM {vm_id}")
+                    return False, "VM created but deployment failed"
+                logger.info(f"LIVE EDIT: VM {vm_id} deployed successfully")
+            
             logger.info(
                 f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone})"
-                f" - worker placement will be calculated during deployment"
+                f"{' and deployed' if is_deployed else ' - worker placement will be calculated during deployment'}"
             )
             return True, vm.to_dict()
         except Exception as e:
@@ -204,8 +397,8 @@ class OrchestratorAPI:
         if not slice_data or slice_data.get("owner") != username:
             return False, "Slice not found or not authorized"
         
-        if slice_data.get("status") != "design":
-            return False, "Cannot create links in deployed slice"
+        # LIVE EDIT: Allow creating links in deployed slices (will reboot affected VMs)
+        is_deployed = slice_data.get("status") == "deployed"
         
         try:
             # Find VMs
@@ -267,9 +460,120 @@ class OrchestratorAPI:
             self.db.update_slice(slice_id, slice_data)
             
             logger.info(f"Link {link_id} created: VM{vm1_id}.{vm1_iface_name} <-> VM{vm2_id}.{vm2_iface_name} (VLAN {vlan_id})")
+            
+            # LIVE EDIT: Reboot VMs to apply new network configuration
+            if is_deployed:
+                logger.info(f"LIVE EDIT: Rebooting VMs {vm1_id} and {vm2_id} to apply new link")
+                
+                # Reboot VM1
+                reboot1_success = self._reboot_vm(vm1_dict)
+                if not reboot1_success:
+                    logger.warning(f"LIVE EDIT: VM {vm1_id} reboot had issues, but continuing...")
+                
+                # Reboot VM2
+                reboot2_success = self._reboot_vm(vm2_dict)
+                if not reboot2_success:
+                    logger.warning(f"LIVE EDIT: VM {vm2_id} reboot had issues, but continuing...")
+                
+                # Save updated slice data with new VM statuses
+                self.db.update_slice(slice_id, slice_data)
+                
+                logger.info(f"LIVE EDIT: VMs rebooted with new interfaces")
+            
             return True, link.to_dict()
         except Exception as e:
             logger.error(f"Link creation error: {e}")
+            return False, str(e)
+    
+    def delete_link(self, username, slice_id, link_id):
+        """
+        Delete a link between two VMs, removing interfaces and rebooting VMs if deployed
+        
+        Args:
+            username: Owner username
+            slice_id: Slice ID
+            link_id: Link ID to delete
+        
+        Returns:
+            tuple: (success: bool, message: str or dict)
+        """
+        slice_data = self.db.get_slice(str(slice_id))
+        
+        if not slice_data or slice_data.get("owner") != username:
+            return False, "Slice not found or not authorized"
+        
+        # LIVE EDIT: Allow deleting links in deployed slices (will reboot affected VMs)
+        is_deployed = slice_data.get("status") == "deployed"
+        
+        try:
+            # Find the link
+            link_to_delete = None
+            link_index = None
+            for idx, link in enumerate(slice_data.get("links", [])):
+                if link.get("link_id") == link_id:
+                    link_to_delete = link
+                    link_index = idx
+                    break
+            
+            if not link_to_delete:
+                return False, "Link not found"
+            
+            vm1_id = link_to_delete.get("vm1_id")
+            vm2_id = link_to_delete.get("vm2_id")
+            vm1_iface_name = link_to_delete.get("vm1_interface")
+            vm2_iface_name = link_to_delete.get("vm2_interface")
+            vlan_id = link_to_delete.get("vlan_id")
+            
+            # Find VMs
+            vm1_dict = next((v for v in slice_data.get("vms", []) if v["vm_id"] == vm1_id), None)
+            vm2_dict = next((v for v in slice_data.get("vms", []) if v["vm_id"] == vm2_id), None)
+            
+            if not vm1_dict or not vm2_dict:
+                return False, "VMs not found"
+            
+            # Remove interfaces from both VMs
+            vm1_dict["interfaces"] = [iface for iface in vm1_dict["interfaces"] if iface.get("name") != vm1_iface_name]
+            vm2_dict["interfaces"] = [iface for iface in vm2_dict["interfaces"] if iface.get("name") != vm2_iface_name]
+            
+            # Remove link from slice
+            slice_data["links"].pop(link_index)
+            
+            # Return VLAN to pool
+            if vlan_id in slice_data.get("vlan_pool_used", []):
+                slice_data["vlan_pool_used"].remove(vlan_id)
+            
+            # Save changes
+            self.db.update_slice(slice_id, slice_data)
+            
+            logger.info(f"Link {link_id} deleted: VM{vm1_id}.{vm1_iface_name} <-> VM{vm2_id}.{vm2_iface_name} (VLAN {vlan_id})")
+            
+            # LIVE EDIT: Reboot VMs to apply configuration changes
+            if is_deployed:
+                logger.info(f"LIVE EDIT: Rebooting VMs {vm1_id} and {vm2_id} to remove link")
+                
+                # Reboot VM1
+                reboot1_success = self._reboot_vm(vm1_dict)
+                if not reboot1_success:
+                    logger.warning(f"LIVE EDIT: VM {vm1_id} reboot had issues, but continuing...")
+                
+                # Reboot VM2
+                reboot2_success = self._reboot_vm(vm2_dict)
+                if not reboot2_success:
+                    logger.warning(f"LIVE EDIT: VM {vm2_id} reboot had issues, but continuing...")
+                
+                # Save updated slice data with new VM statuses
+                self.db.update_slice(slice_id, slice_data)
+                
+                logger.info(f"LIVE EDIT: VMs rebooted without deleted link")
+                
+                # Clean up network infrastructure if no other VMs use this VLAN
+                network_provider = self._get_network_provider(slice_data.get("availability_zone", "linux"))
+                network_provider.delete_network(vlan_id)
+                logger.info(f"VLAN {vlan_id} infrastructure cleaned up")
+            
+            return True, {"link_id": link_id, "message": "Link deleted successfully"}
+        except Exception as e:
+            logger.error(f"Link deletion error: {e}")
             return False, str(e)
     
     def deploy_slice(self, username, slice_id):
@@ -389,7 +693,7 @@ class OrchestratorAPI:
                             from qcow_manager import QCOWManager
                             qcow_mgr = QCOWManager(self.compute_provider.executor)
                             success, qcow_img = qcow_mgr.create_backing_image(
-                                worker_ip, vm_name, image_path, []
+                                worker_ip, slice_id, vm_id, vm_name, image_path, []
                             )
                             if success:
                                 vm_dict["qcow_image"] = qcow_img
@@ -522,37 +826,59 @@ class OrchestratorAPI:
             return False, str(e)
     
     def update_vm(self, username, slice_id, vm_id, updates):
-        """Update VM properties (only in design state)"""
+        """
+        Update VM properties
+        
+        LIVE EDIT: In deployed state, only internet_enabled can be changed (triggers VM reboot)
+        In design state, all properties can be changed
+        """
         try:
             slice_data = self.db.get_slice(str(slice_id))
             if not slice_data or slice_data.get("owner") != username:
                 return False, "Slice not found or not authorized"
             
-            if slice_data.get("status") != "design":
-                return False, "Cannot update deployed VM"
+            is_deployed = slice_data.get("status") == "deployed"
             
             vm_dict = next((v for v in slice_data.get("vms", []) if v["vm_id"] == vm_id), None)
             if not vm_dict:
                 return False, "VM not found"
             
+            # In deployed state, only allow internet changes
+            if is_deployed:
+                if "internet_enabled" not in updates:
+                    return False, "Only internet settings can be changed in deployed state"
+                
+                if "vm_name" in updates or "flavor" in updates:
+                    return False, "Cannot change VM name or flavor in deployed state"
+            
             # Update allowed fields
-            if "vm_name" in updates:
+            if "vm_name" in updates and not is_deployed:
                 vm_dict["name"] = updates["vm_name"]
-            if "flavor" in updates:
+            
+            if "flavor" in updates and not is_deployed:
                 vm_dict["flavor"] = updates["flavor"]
+            
             if "internet_enabled" in updates:
                 # Update internet interface (VLAN 400)
                 mgmt_iface = vm_dict["interfaces"][0]
+                
                 if updates["internet_enabled"]:
+                    # Enable internet on VLAN 400
                     mgmt_iface["vlan_id"] = 400
-                    mgmt_iface["ip_config"] = {
-                        "ip": f"10.60.7.{100 + vm_id % 100}",
-                        "cidr": "10.60.7.0/24",
-                        "gateway": "10.60.7.1"
-                    }
+                    # Note: IP will be assigned by DHCP, no static config needed
+                    mgmt_iface["ip_config"] = None
                 else:
+                    # Disable internet (no VLAN)
                     mgmt_iface["vlan_id"] = None
                     mgmt_iface["ip_config"] = None
+                
+                # LIVE EDIT: Reboot VM to apply internet changes if deployed
+                if is_deployed:
+                    logger.info(f"LIVE EDIT: Rebooting VM {vm_id} to apply internet configuration change")
+                    reboot_success = self._reboot_vm(vm_dict)
+                    
+                    if not reboot_success:
+                        logger.warning(f"LIVE EDIT: VM {vm_id} reboot had issues")
             
             self.db.update_slice(slice_id, slice_data)
             logger.info(f"VM {vm_id} updated in slice {slice_id}")
@@ -583,11 +909,11 @@ class OrchestratorAPI:
             else:
                 return False, f"Unknown topology type: {topology_type}"
             
-            # Create VMs
+            # Create VMs with auto-naming to continue sequence
             created_vms = []
             for vm_cfg in vms_config:
                 success, vm_dict = self.add_vm_to_slice(
-                    username, slice_id, vm_cfg['name'], vm_cfg['flavor'], vm_cfg['internet_enabled']
+                    username, slice_id, vm_cfg['name'], vm_cfg['flavor'], vm_cfg['internet_enabled'], auto_name=True
                 )
                 if not success:
                     return False, f"Failed to create VM: {vm_dict}"

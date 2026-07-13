@@ -7,11 +7,12 @@ class QCOWManager:
         self.executor = remote_executor
         self.base_dir = base_dir
     
-    def create_backing_image(self, worker_ip, vm_name, base_image_path, vlan_ids):
+    def create_backing_image(self, worker_ip, slice_id, vm_id, vm_name, base_image_path, vlan_ids):
         """Create QCOW2 image with backing file (thin provisioning)"""
         try:
             base_filename = os.path.basename(base_image_path)
-            vm_image = f"{vm_name}_img.qcow2"
+            # Use slice_id + VM ID for guaranteed uniqueness across all users and slices
+            vm_image = f"slice{slice_id}_vm{vm_id}_{vm_name}_img.qcow2"
             
             # Copy base image from local (10.0.10.4) to worker if not exists
             check_cmd = f"test -f {self.base_dir}/{base_filename} && echo 'exists' || echo 'missing'"

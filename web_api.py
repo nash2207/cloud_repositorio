@@ -458,6 +458,19 @@ async def api_create_link(slice_id: int, link_req: CreateLinkRequest, request: R
     
     return result
 
+@app.delete("/api/slices/{slice_id}/links/{link_id}")
+async def api_delete_link(slice_id: int, link_id: int, request: Request):
+    """Delete a link between two VMs (works in both design and deployed states)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    success, result = orchestrator.delete_link(user, slice_id, link_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=result)
+    
+    return result
+
 @app.post("/api/slices/{slice_id}/deploy")
 async def api_deploy_slice(slice_id: int, request: Request):
     user = verify_session(request)

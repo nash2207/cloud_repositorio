@@ -417,8 +417,11 @@
             });
             const hasSlice = currentSliceId !== null;
             const isDesign = currentSliceData && currentSliceData.status === 'design';
-            document.getElementById('addVMBtn').disabled = !hasSlice || !isDesign;
-            document.getElementById('topologyBtn').disabled = !hasSlice || !isDesign;
+            const isDeployed = currentSliceData && currentSliceData.status === 'deployed';
+            
+            // LIVE EDIT: Allow VM/topology creation in both design AND deployed states
+            document.getElementById('addVMBtn').disabled = !hasSlice;
+            document.getElementById('topologyBtn').disabled = !hasSlice || !isDesign;  // Topology only in design
             document.getElementById('deployBtn').disabled = !hasSlice || !isDesign;
         }
 
@@ -550,6 +553,26 @@
                     console.log('selectNode event in normal mode (not link mode)');
                 }
                 console.log('=========================');
+            });
+            
+            // Right-click on edge to delete link
+            network.on('oncontext', (params) => {
+                params.event.preventDefault();  // Prevent browser context menu
+                
+                // Get edge under cursor
+                const edgeId = network.getEdgeAt(params.pointer.DOM);
+                
+                if (edgeId) {
+                    // Find link by edge ID
+                    const edgeIndex = parseInt(edgeId.replace('link-', ''));
+                    const link = currentSliceData.links[edgeIndex];
+                    
+                    if (link && confirm(`Delete link between VM${link.vm1_id} and VM${link.vm2_id}?\n\n` +
+                        `VLAN ${link.vlan_id}: ${link.vm1_interface} ↔ ${link.vm2_interface}\n\n` +
+                        (currentSliceData.status === 'deployed' ? '⚠️ VMs will be rebooted to apply changes!' : ''))) {
+                        deleteLink(link.link_id);
+                    }
+                }
             });
         }
 
@@ -691,8 +714,22 @@
             // Check if VM has internet (VLAN 400 on ens3)
             const hasInternet = vm.interfaces.some(iface => iface.vlan_id === 400);
             document.getElementById('editVMInternet').checked = hasInternet;
-            document.getElementById('editVMInternet').disabled = !isDesign;
-            document.getElementById('updateVMBtn').disabled = !isDesign;
+            
+            // LIVE EDIT: Allow changing internet in deployed state (will reboot VM)
+            document.getElementById('editVMInternet').disabled = false;
+            
+            // Update button state: allow updates in both design and deployed states
+            document.getElementById('updateVMBtn').disabled = false;
+            
+            // Update help text based on state
+            const helpText = document.querySelector('#editVMInternetBlock p');
+            if (isDeployed) {
+                helpText.textContent = '⚠️ Changing internet will reboot the VM!';
+                helpText.className = 'text-xs text-yellow-400 mt-1';
+            } else {
+                helpText.textContent = '⚠️ Only editable in design state';
+                helpText.className = 'text-xs text-yellow-400 mt-1';
+            }
             
             // Enable console button only if VM is deployed
             document.getElementById('consoleBtn').disabled = !isDeployed;
@@ -873,15 +910,52 @@
         async function updateVM(e) {
             e.preventDefault();
             const vmId = parseInt(document.getElementById('editVMId').value);
+            
+            // Check if slice is deployed and confirm with user
+            if (currentSliceData.status === 'deployed') {
+                if (!confirm('⚠️ VM is deployed!\n\nChanging internet configuration will REBOOT the VM.\n\nContinue?')) {
+                    return;
+                }
+            }
+            
             try {
                 await apiCall(`/api/slices/${currentSliceId}/vms/${vmId}`, {
                     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ vm_name: document.getElementById('editVMName').value, 
                         flavor: document.getElementById('editVMFlavor').value, internet_enabled: document.getElementById('editVMInternet').checked })
                 });
-                closeModal('editVMModal'); await viewSlice(currentSliceId);
-                alert('VM updated successfully');
-            } catch (err) { alert('Error: ' + err.message); }
+                closeModal('editVMModal'); 
+                await viewSlice(currentSliceId);
+                
+                if (currentSliceData.status === 'deployed') {
+                    alert('✓ VM updated! VM has been rebooted with new configuration.');
+                } else {
+                    alert('✓ VM updated successfully');
+                }
+            } catch (err) { 
+                alert('Error: ' + err.message); 
+            }
+        }
+
+        async function deleteLink(linkId) {
+            if (!currentSliceId) { alert('Please select a slice first'); return; }
+            try {
+                const result = await apiCall(`/api/slices/${currentSliceId}/links/${linkId}`, {
+                    method: 'DELETE'
+                });
+                console.log('Link deleted:', result);
+                
+                // Reload slice to show updated topology
+                await viewSlice(currentSliceId);
+                await loadQuotas();
+                
+                if (currentSliceData.status === 'deployed') {
+                    alert('✓ Link deleted! VMs have been rebooted with updated configuration.');
+                }
+            } catch (err) { 
+                console.error('Delete link error:', err);
+                alert('Error deleting link: ' + err.message); 
+            }
         }
 
         async function createTopology(e) {
