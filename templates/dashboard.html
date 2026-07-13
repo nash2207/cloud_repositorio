@@ -681,6 +681,7 @@
                 console.log('Cannot start link mode: wrong state');
                 return; 
             }
+            
             console.log('=== STARTING LINK MODE ===');
             linkMode = true; 
             selectedVMs = []; 
@@ -697,6 +698,10 @@
             
             console.log('About to open modal...');
             openModal('createLinkModal');
+            
+            // Show alert to make it obvious
+            alert('✓ LINK MODE ACTIVATED!\n\nNow click on VMs in the topology to select them.\n\n1st click = Select first VM\n2nd click = Select second VM\nThen click "Create" button');
+            
             console.log('✓ Link mode started - Click on VMs to select them');
             console.log('✓ Modal should now be open, linkMode =', linkMode);
             console.log('==========================');
