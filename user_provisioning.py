@@ -5,7 +5,7 @@ Handles local user creation with automatic OpenStack tenant provisioning
 import logging
 import hashlib
 from database import Database
-from openstack.keystone_client import KeystoneClient
+from openstack_clients.keystone_client import KeystoneClient
 
 logger = logging.getLogger(__name__)
 

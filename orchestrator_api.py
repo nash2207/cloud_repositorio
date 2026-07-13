@@ -884,7 +884,7 @@ class OrchestratorAPI:
                 logger.info("PHASE 3: Launching VMs in parallel...")
                 
                 # Initialize resource mapper for image/flavor ID resolution
-                from openstack.resource_mapper import OpenStackResourceMapper
+                from openstack_clients.resource_mapper import OpenStackResourceMapper
                 resource_mapper = OpenStackResourceMapper(compute_provider.connection)
                 
                 # Prepare VM assignments for parallel deployment

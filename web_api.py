@@ -381,7 +381,7 @@ async def api_delete_user(username: str, request: Request):
     # Delete from OpenStack if provisioned
     if "openstack" in target_user:
         try:
-            from openstack.keystone_client import KeystoneClient
+            from openstack_clients.keystone_client import KeystoneClient
             
             openstack_config = db.data.get("openstack", {})
             keystone = KeystoneClient(
@@ -508,7 +508,7 @@ def _ensure_openstack_providers_registered():
     try:
         from providers.openstack_compute_provider import OpenStackComputeProvider
         from providers.neutron_network_provider import NeutronNetworkProvider
-        from openstack.connection import create_admin_connection
+        from openstack_clients.connection import create_admin_connection
         
         # Get OpenStack configuration
         openstack_config = db.data.get("openstack", {})
@@ -889,8 +889,8 @@ async def api_get_openstack_resources(request: Request):
     
     try:
         # Create OpenStack connection
-        from openstack.connection import create_admin_connection
-        from openstack.resource_mapper import OpenStackResourceMapper
+        from openstack_clients.connection import create_admin_connection
+        from openstack_clients.resource_mapper import OpenStackResourceMapper
         
         openstack_config = db.data.get("openstack", {})
         

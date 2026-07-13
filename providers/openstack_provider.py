@@ -29,9 +29,9 @@ IMPORTANT NOTES:
 
 import logging
 from providers.base_compute import BaseComputeProvider
-from openstack.keystone_client import KeystoneClient
-from openstack.nova_client import NovaClient
-from openstack.neutron_client import NeutronClient
+from openstack_clients.keystone_client import KeystoneClient
+from openstack_clients.nova_client import NovaClient
+from openstack_clients.neutron_client import NeutronClient
 
 logger = logging.getLogger(__name__)
 
