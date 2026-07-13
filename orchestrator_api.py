@@ -369,7 +369,7 @@ class OrchestratorAPI:
                 
                 # 3. Create QCOW2 images and cloud-init seeds for all VMs
                 from cloudinit_seed import CloudInitSeedGenerator
-                seed_generator = CloudInitSeedGenerator(self.linux_executor)
+                seed_generator = CloudInitSeedGenerator(self.compute_provider.executor)
                 
                 for vm_dict in slice_data.get("vms", []):
                     worker_ip = vm_dict.get("worker_ip")
@@ -387,7 +387,7 @@ class OrchestratorAPI:
                         if image_path:
                             logger.info(f"Creating QCOW2 image for VM {vm_id} ({vm_name}) on {worker_ip}")
                             from qcow_manager import QCOWManager
-                            qcow_mgr = QCOWManager(self.linux_executor)
+                            qcow_mgr = QCOWManager(self.compute_provider.executor)
                             success, qcow_img = qcow_mgr.create_backing_image(
                                 worker_ip, vm_name, image_path, []
                             )
@@ -509,7 +509,7 @@ class OrchestratorAPI:
             logger.info("Running infrastructure cleanup after slice deletion...")
             try:
                 from infrastructure_cleanup import InfrastructureCleanup
-                cleanup = InfrastructureCleanup(self.db, self.linux_executor, self.vlan_trunk_manager)
+                cleanup = InfrastructureCleanup(self.db, self.compute_provider.executor, self.vlan_trunk_manager)
                 cleanup.cleanup_all()
                 logger.info("Infrastructure cleanup completed")
             except Exception as e:
