@@ -143,14 +143,20 @@ class OVSNetworkProvider(BaseNetworkProvider):
             cmd5 = f"sudo ip netns exec {ns_name} pkill dnsmasq 2>/dev/null || true"
             self.executor.execute_direct(self.network_node_ip, cmd5)
             
-            # Run dnsmasq in background with DNS disabled (--port=0)
+            # Run dnsmasq as a proper daemon using nohup and disown
             # --port=0: Disable DNS server (no port 53 conflict)
             # --dhcp-range: DHCP range and lease time
             # --dhcp-option=3: Default gateway
             # --dhcp-option=6: DNS server (Google DNS)
-            # --log-facility=-: Log to stderr (captured by systemd)
-            cmd6 = f"sudo ip netns exec {ns_name} dnsmasq --port=0 --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-facility=- &"
+            # --keep-in-foreground: Prevent double-fork (incompatible with netns)
+            # --log-dhcp: Enable DHCP transaction logging
+            # --log-facility=-: Log to stderr
+            # nohup + setsid: Properly daemonize to survive SSH session close
+            cmd6 = f"sudo ip netns exec {ns_name} bash -c 'nohup dnsmasq --port=0 --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-dhcp --log-facility=- > /var/log/dnsmasq-vlan{vlan_id}.log 2>&1 &'"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
+            
+            if not success:
+                logger.error(f"Failed to start dnsmasq command: {output}")
             
             # Wait a moment for dnsmasq to start
             import time
@@ -164,7 +170,11 @@ class OVSNetworkProvider(BaseNetworkProvider):
                 logger.info(f"DHCP configured for VLAN {vlan_id} (dnsmasq PID: {pid.strip()})")
                 return True
             else:
-                logger.error(f"dnsmasq not running in {ns_name}")
+                logger.error(f"dnsmasq not running in {ns_name} after startup")
+                # Try to read the log file to see what went wrong
+                log_check = f"sudo tail -20 /var/log/dnsmasq-vlan{vlan_id}.log 2>/dev/null || echo 'No log file'"
+                _, log_output = self.executor.execute_direct(self.network_node_ip, log_check, timeout=5)
+                logger.error(f"dnsmasq log for VLAN {vlan_id}: {log_output}")
                 return False
                 
         except Exception as e:

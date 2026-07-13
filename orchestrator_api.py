@@ -1284,14 +1284,14 @@ class OrchestratorAPI:
             return False, str(e)
     
     def create_topology_preset(self, username, slice_id, topology_type, num_vms, flavor, internet, base_name):
-        """Create predefined topology (ring, bus, star, mesh)"""
+        """Create predefined topology (ring, bus, star, mesh) - supports live editing"""
         try:
             slice_data = self.db.get_slice(str(slice_id))
             if not slice_data or slice_data.get("owner") != username:
                 return False, "Slice not found or not authorized"
             
-            if slice_data.get("status") != "design":
-                return False, "Cannot modify deployed slice"
+            # Allow topology creation in deployed slices (VMs will be in "design" state)
+            # User must click "Deploy Edition" to deploy the new topology
             
             # Generate topology
             if topology_type == "ring":

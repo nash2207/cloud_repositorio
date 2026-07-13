@@ -156,8 +156,13 @@ class CLI:
                 vlan_pool = f"{slice_data.get('vlan_pool_start')}-{slice_data.get('vlan_pool_end')}"
                 print(f"Slice {slice_id} [{status}]: {vm_count} VMs, {link_count} Links, VLAN pool: {vlan_pool}")
                 for vm in slice_data.get("vms", []):
-                    flavor = vm.get('flavor', {}).get('disk_gb', 'N/A')
-                    print(f"  └─ VM {vm['vm_id']}: {vm['name']} (VNC: {vm['vnc_port']}, Worker: {vm['worker_ip']}, Disk: {flavor}GB)")
+                    # Handle flavor as string (name) or dict
+                    flavor_value = vm.get('flavor', 'N/A')
+                    if isinstance(flavor_value, dict):
+                        flavor_str = flavor_value.get('disk_gb', 'N/A')
+                    else:
+                        flavor_str = flavor_value  # Just show the flavor name
+                    print(f"  └─ VM {vm['vm_id']}: {vm['name']} (VNC: {vm['vnc_port']}, Worker: {vm['worker_ip']}, Flavor: {flavor_str})")
                     for iface in vm.get("interfaces", []):
                         link_info = f", Link: {iface['link_id']}" if iface.get('link_id') else ", unconnected"
                         vlan_info = f", VLAN: {iface['vlan_id']}" if iface.get('vlan_id') else ""
