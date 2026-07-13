@@ -26,8 +26,8 @@ class NeutronNetworkProvider(BaseNetworkProvider):
     DEFAULT_PREFIX_LENGTH = 29  # /29 = 8 IPs per network
     
     # Internet/management network (pre-existing in OpenStack)
-    INTERNET_NETWORK_NAME = "external"  # External provider network for internet/SSH access
-    INTERNET_GATEWAY = "10.60.8.126"
+    INTERNET_NETWORK_NAME = "external"  # External provider network
+    INTERNET_GATEWAY = "10.60.8.126"  # Physical switch gateway
     
     def __init__(self, connection):
         """
@@ -270,7 +270,7 @@ class NeutronNetworkProvider(BaseNetworkProvider):
         Create a port on the internet/management network
         
         The internet network is pre-existing in OpenStack with:
-        - Network name: "provider" (external provider network)
+        - Network name: "external" (external provider network)
         - Gateway: 10.60.8.126
         - VLAN: 10 (configured at physical switch level)
         
@@ -328,6 +328,25 @@ class NeutronNetworkProvider(BaseNetworkProvider):
             
         except Exception as e:
             logger.error(f"Failed to create internet port for VM {vm_name}: {e}")
+            return None
+    
+    def get_internet_network_id(self):
+        """
+        Get the ID of the internet/external network
+        
+        Returns:
+            str: Network ID or None if not found
+        """
+        try:
+            networks = list(self.connection.network.networks(name=self.INTERNET_NETWORK_NAME))
+            if not networks:
+                logger.error(f"Internet network '{self.INTERNET_NETWORK_NAME}' not found")
+                return None
+            
+            return networks[0].id
+            
+        except Exception as e:
+            logger.error(f"Failed to get internet network ID: {e}")
             return None
     
     def allocate_subnets(self, count, address_pool=None, prefix_length=None):

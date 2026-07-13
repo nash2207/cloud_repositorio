@@ -818,67 +818,59 @@ class OrchestratorAPI:
                     
                     logger.info(f"Created {len(network_specs)} networks in parallel")
                 
-                # === PHASE 2: Create Ports for Each VM ===
-                logger.info("PHASE 2: Creating ports for VMs...")
+                # === PHASE 2: Prepare Network Information for VMs ===
+                logger.info("PHASE 2: Preparing network configurations for VMs...")
+                
+                # For OpenStack, we'll let Nova auto-create ports during VM creation
+                # This avoids port binding race conditions
                 
                 for vm_dict in slice_data.get("vms", []):
                     vm_name = vm_dict.get("name")
                     vm_id = vm_dict.get("vm_id")
                     interfaces = vm_dict.get("interfaces", [])
                     
-                    # Create ports for topology networks
+                    # Build network list for Nova (network IDs, not ports)
+                    vm_networks = []
+                    
                     for iface in interfaces:
                         vlan_id = iface.get("vlan_id")
                         link_id = iface.get("link_id")
                         
-                        # Skip internet interface (VLAN 400) - handle separately
+                        # Internet network (VLAN 400)
                         if vlan_id == 400:
+                            # Use external network ID directly
+                            internet_net_id = network_provider.get_internet_network_id()
+                            if internet_net_id:
+                                vm_networks.append({
+                                    "network_id": internet_net_id,
+                                    "interface_name": iface.get("name")
+                                })
+                                logger.info(f"VM {vm_name}: Will attach to external network (internet)")
+                            else:
+                                logger.warning(f"VM {vm_name}: Internet network not found, skipping")
                             continue
                         
-                        # Find the network for this VLAN
+                        # Topology network (inter-VM links)
                         link = next((l for l in slice_data.get("links", []) if l.get("link_id") == link_id), None)
                         if not link:
                             logger.warning(f"Link {link_id} not found for interface {iface.get('name')}")
                             continue
                         
                         network_id = link.get("network_id")
-                        subnet_id = link.get("subnet_id")
                         
-                        if not network_id or not subnet_id:
-                            logger.error(f"Network/subnet not found for VLAN {vlan_id}")
+                        if not network_id:
+                            logger.error(f"Network not found for VLAN {vlan_id}")
                             return False, f"Network not ready for VLAN {vlan_id}"
                         
-                        # Create port
-                        port_name = f"slice{slice_id}-vm{vm_id}-{iface.get('name')}"
-                        port_info = network_provider.create_port(network_id, subnet_id, port_name)
-                        
-                        if not port_info:
-                            logger.error(f"Failed to create port {port_name}")
-                            return False, f"Failed to create port for VM {vm_name}"
-                        
-                        # Store port info in interface
-                        iface["port_id"] = port_info["id"]
-                        iface["ip_config"] = port_info["ip_address"]
-                        iface["mac"] = port_info["mac_address"]
-                        
-                        logger.info(f"Created port {port_info['id']} for VM {vm_name} interface {iface.get('name')} (IP: {port_info['ip_address']})")
+                        vm_networks.append({
+                            "network_id": network_id,
+                            "interface_name": iface.get("name")
+                        })
+                        logger.info(f"VM {vm_name}: Will attach to network {network_id}")
                     
-                    # Create internet/management port
-                    has_internet = any(iface.get("vlan_id") == 400 for iface in interfaces)
-                    if has_internet:
-                        logger.info(f"Creating internet port for VM {vm_name}")
-                        internet_port = network_provider.create_internet_port(vm_name, f"slice{slice_id}")
-                        
-                        if not internet_port:
-                            logger.warning(f"Failed to create internet port for VM {vm_name}, continuing without it")
-                        else:
-                            # Add internet port to interfaces
-                            internet_iface = next((iface for iface in interfaces if iface.get("vlan_id") == 400), None)
-                            if internet_iface:
-                                internet_iface["port_id"] = internet_port["id"]
-                                internet_iface["ip_config"] = internet_port["ip_address"]
-                                internet_iface["mac"] = internet_port["mac_address"]
-                                logger.info(f"Internet port created with IP {internet_port['ip_address']}")
+                    # Store network list in VM dict for use during creation
+                    vm_dict["openstack_networks"] = vm_networks
+                    logger.info(f"VM {vm_name}: Prepared {len(vm_networks)} network attachment(s)")
                 
                 # Save updated slice data with ports
                 self.db.update_slice(slice_id, slice_data)

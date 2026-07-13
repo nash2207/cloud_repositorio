@@ -81,7 +81,7 @@ class OpenStackComputeProvider(BaseComputeProvider):
                 status="ACTIVE",
                 failures=["ERROR"],
                 interval=2,
-                wait=600,  # 10 minute timeout
+                wait=120,  # 2 minute timeout (reduced for faster debugging)
             )
             
             logger.info(f"VM {vm_name} is now ACTIVE (ID: {server.id})")
