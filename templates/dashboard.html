@@ -652,9 +652,13 @@
                     const edgeIndex = parseInt(edgeId.replace('link-', ''));
                     const link = currentSliceData.links[edgeIndex];
                     
-                    if (link && confirm(`Delete link between VM${link.vm1_id} and VM${link.vm2_id}?\n\n` +
-                        `VLAN ${link.vlan_id}: ${link.vm1_interface} ↔ ${link.vm2_interface}\n\n` +
-                        (currentSliceData.status === 'deployed' ? '⚠️ VMs will be rebooted to apply changes!' : ''))) {
+                    if (link) {
+                        // Show warning toast and delete
+                        if (currentSliceData.status === 'deployed') {
+                            showToast(`⚠️ Deleting link between VM${link.vm1_id} and VM${link.vm2_id} - VMs will reboot!`, 'warning');
+                        } else {
+                            showToast(`Deleting link between VM${link.vm1_id} and VM${link.vm2_id}...`, 'info');
+                        }
                         deleteLink(link.link_id);
                     }
                 }
@@ -929,7 +933,9 @@
         async function deployCurrentSlice() {
             if (!currentSliceId) return;
             if (currentSliceData.vms.length === 0) { showToast('Cannot deploy empty slice', 'warning'); return; }
-            if (!confirm(`Deploy Slice #${currentSliceId}?\n\n${currentSliceData.vms.length} VMs will be deployed.`)) return;
+            
+            // Show toast instead of confirm
+            showToast(`🚀 Deploying ${currentSliceData.vms.length} VMs...`, 'info');
             
             try {
                 // Show progress bar
@@ -986,7 +992,11 @@
         }
 
         async function deleteCurrentSlice() {
-            if (!currentSliceId || !confirm(`Delete Slice #${currentSliceId}?`)) return;
+            if (!currentSliceId) return;
+            
+            // Show warning toast
+            showToast(`🗑️ Deleting Slice #${currentSliceId}...`, 'warning');
+            
             try {
                 await apiCall(`/api/slices/${currentSliceId}`, { method: 'DELETE' });
                 currentSliceId = null; currentSliceData = null;
@@ -1041,11 +1051,9 @@
             e.preventDefault();
             const vmId = parseInt(document.getElementById('editVMId').value);
             
-            // Check if slice is deployed and confirm with user
+            // Show warning toast if deployed (no blocking confirm)
             if (currentSliceData.status === 'deployed') {
-                if (!confirm('⚠️ VM is deployed!\n\nChanging internet configuration will REBOOT the VM.\n\nContinue?')) {
-                    return;
-                }
+                showToast('⚠️ VM will be rebooted to apply changes...', 'warning');
             }
             
             try {
@@ -1090,9 +1098,12 @@
 
         async function createTopology(e) {
             e.preventDefault();
-            if (!currentSliceId) { showToast('Please select a slice first', 'info'); return; }
+            if (!currentSliceId) { showToast('Please select a slice first', 'warning'); return; }
             const type = document.getElementById('topoType').value, numVMs = parseInt(document.getElementById('topoNumVMs').value);
-            if (!confirm(`Create ${type} topology with ${numVMs} VMs?`)) return;
+            
+            // Show toast instead of confirm
+            showToast(`Creating ${type} topology with ${numVMs} VMs...`, 'info');
+            
             try {
                 await apiCall(`/api/slices/${currentSliceId}/topology`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1129,8 +1140,8 @@
         }
 
         async function cleanupOrphaned() {
-            if (!confirm('Cleanup orphaned VMs?')) return;
-            try { await apiCall('/api/cleanup-orphaned', { method: 'POST' }); await loadSlices(); await loadQuotas(); showToast('Cleanup completed', 'info'); }
+            showToast('🧹 Cleaning up orphaned VMs...', 'info');
+            try { await apiCall('/api/cleanup-orphaned', { method: 'POST' }); await loadSlices(); await loadQuotas(); showToast('Cleanup completed', 'success'); }
             catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
@@ -1205,7 +1216,7 @@
         }
 
         async function deleteUser(username) {
-            if (!confirm(`Delete user '${username}' and all their slices?`)) return;
+            showToast(`🗑️ Deleting user '${username}' and all their slices...`, 'warning');
             
             try {
                 await apiCall(`/api/users/${username}`, { method: 'DELETE' });

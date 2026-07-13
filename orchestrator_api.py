@@ -240,6 +240,7 @@ class OrchestratorAPI:
             vm_id = vm_dict["vm_id"]
             vm_name = vm_dict["name"]
             worker_ip = vm_dict["worker_ip"]
+            interfaces = vm_dict.get("interfaces", [])
             
             logger.info(f"LIVE EDIT: Rebooting VM {vm_id} ({vm_name}) on {worker_ip}")
             
@@ -255,7 +256,20 @@ class OrchestratorAPI:
             logger.info(f"Waiting 3 seconds for VM {vm_id} cleanup...")
             time.sleep(3)
             
-            # Step 3: Restart the VM
+            # Step 3: Regenerate cloud-init seed ISO with updated interfaces
+            logger.info(f"Regenerating cloud-init seed for VM {vm_id} with updated interfaces...")
+            from cloudinit_seed import CloudInitSeedGenerator
+            seed_generator = CloudInitSeedGenerator(self.compute_provider.executor)
+            success, seed_iso = seed_generator.generate_seed_iso(
+                worker_ip, vm_id, vm_name, interfaces
+            )
+            if success:
+                vm_dict["seed_iso"] = seed_iso
+                logger.info(f"Cloud-init seed regenerated: {seed_iso}")
+            else:
+                logger.warning(f"Failed to regenerate cloud-init seed for VM {vm_id}")
+            
+            # Step 4: Restart the VM
             logger.info(f"Restarting VM {vm_id}...")
             start_success, pid = self.compute_provider.launch_vm(worker_ip, vm_dict)
             
@@ -320,7 +334,8 @@ class OrchestratorAPI:
         Args:
             auto_name: If True, automatically find next available name using vm_name as base
         
-        LIVE EDIT: If slice is deployed, VM will be immediately deployed after creation
+        NEW BEHAVIOR: VMs added to deployed slices stay in "design" state
+        User must click "Deploy Edition" button to deploy the new VMs
         """
         user = self.db.get_user(username)
         slice_data = self.db.get_slice(str(slice_id))
@@ -331,7 +346,7 @@ class OrchestratorAPI:
         if slice_data.get("owner") != username:
             return False, "Not authorized"
         
-        # LIVE EDIT: Allow adding VMs to deployed slices
+        # Allow adding VMs to deployed slices (but don't deploy them automatically)
         is_deployed = slice_data.get("status") == "deployed"
         
         if (user.get("used_vms", 0) + 1) > user.get("quota_vms", 10):
@@ -346,18 +361,10 @@ class OrchestratorAPI:
             vm_id = self.db.get_next_vm_id()
             availability_zone = slice_data.get("availability_zone", "linux")
             
-            # Worker placement
-            if is_deployed:
-                # LIVE EDIT: Place VM immediately for deployed slice
-                worker_ip = self._place_single_vm(slice_id, flavor_name, availability_zone)
-                if not worker_ip:
-                    return False, "No available worker found"
-                logger.info(f"LIVE EDIT: Placing VM {vm_id} on {worker_ip}")
-            else:
-                # Design mode: defer placement
-                worker_ip = "PENDING"
+            # Always defer placement - no immediate deployment
+            worker_ip = "PENDING"
             
-            # Create VM
+            # Create VM in design state
             success, vm = self.deployment_api.create_vm_with_qcow(
                 slice_id, vm_id, vm_name, username, worker_ip, flavor_name, internet_enabled
             )
@@ -372,18 +379,9 @@ class OrchestratorAPI:
             user["used_vms"] = user.get("used_vms", 0) + 1
             self.db.update_user(username, user)
             
-            # LIVE EDIT: Deploy VM immediately if slice is deployed
-            if is_deployed:
-                logger.info(f"LIVE EDIT: Deploying VM {vm_id} immediately")
-                deploy_success = self._deploy_single_vm(slice_id, vm.to_dict())
-                if not deploy_success:
-                    logger.error(f"LIVE EDIT: Failed to deploy VM {vm_id}")
-                    return False, "VM created but deployment failed"
-                logger.info(f"LIVE EDIT: VM {vm_id} deployed successfully")
-            
             logger.info(
-                f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone})"
-                f"{' and deployed' if is_deployed else ' - worker placement will be calculated during deployment'}"
+                f"VM {vm_id} ({flavor_name}) added to slice {slice_id} (AZ: {availability_zone}) in design state"
+                f"{' - use Deploy Edition to deploy new VMs' if is_deployed else ''}"
             )
             return True, vm.to_dict()
         except Exception as e:
