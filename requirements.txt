@@ -5,3 +5,4 @@ pyyaml==6.0.1
 numpy==1.24.3
 websockify==0.11.0
 websockets==12.0
+openstacksdk==1.5.0

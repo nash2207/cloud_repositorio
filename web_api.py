@@ -55,13 +55,15 @@ def set_monitoring_system(ms):
     if not orchestrator:
         from providers.baremetal_provider import BareMetalComputeProvider
         from providers.ovs_network_provider import OVSNetworkProvider
+        from providers.openstack_compute_provider import OpenStackComputeProvider
+        from providers.neutron_network_provider import NeutronNetworkProvider
         from vlan_trunk_manager import VLANTrunkManager
         
         # Provider factory: decides which concrete implementations to use
         clusters_config = db.data.get("clusters", {})
         linux_cluster = clusters_config.get("linux", {})
         
-        # Instantiate concrete providers based on configuration
+        # Linux cluster providers (default)
         compute_provider = BareMetalComputeProvider(executor)
         network_provider = OVSNetworkProvider(
             executor,
@@ -71,17 +73,19 @@ def set_monitoring_system(ms):
         vlan_manager = VLANTrunkManager(executor, "10.0.0.7")
         
         # Inject dependencies into orchestrator (follows Dependency Injection pattern)
+        # Note: Current design uses single provider pair. For multi-cluster support,
+        # orchestrator would need provider registry indexed by availability_zone
         orchestrator = OrchestratorAPI(
             db, 
             deployment, 
             monitoring_system,
-            compute_provider=compute_provider,      # ← Injected
-            network_provider=network_provider,      # ← Injected
+            compute_provider=compute_provider,      # ← Injected (Linux default)
+            network_provider=network_provider,      # ← Injected (Linux default)
             vlan_trunk_manager=vlan_manager,        # ← Injected
             clusters_config=clusters_config
         )
         
-        logger.info("Orchestrator initialized with injected providers (Hexagonal Architecture)")
+        logger.info("Orchestrator initialized with Linux providers (Hexagonal Architecture)")
     
     # Re-initialize orchestrator with monitoring system (uses same injected providers)
     if orchestrator:
@@ -457,11 +461,53 @@ async def api_create_slice(slice_req: CreateSliceRequest, request: Request):
     if slice_req.availability_zone not in ["linux", "openstack"]:
         raise HTTPException(status_code=400, detail="Invalid availability_zone. Choose 'linux' or 'openstack'")
     
+    # Register OpenStack providers on-demand if needed
+    if slice_req.availability_zone == "openstack" and orchestrator:
+        _ensure_openstack_providers_registered()
+    
     success, result = orchestrator.create_slice(user, slice_req.name, "custom", slice_req.availability_zone)
     if not success:
         raise HTTPException(status_code=400, detail=result)
     
     return result
+
+def _ensure_openstack_providers_registered():
+    """Lazily register OpenStack providers when first needed"""
+    if "openstack" in orchestrator._provider_registry:
+        return  # Already registered
+    
+    try:
+        from providers.openstack_compute_provider import OpenStackComputeProvider
+        from providers.neutron_network_provider import NeutronNetworkProvider
+        from openstack.connection import create_admin_connection
+        
+        # Get OpenStack configuration
+        openstack_config = db.data.get("openstack", {})
+        
+        if not openstack_config.get("enabled", False):
+            logger.warning("OpenStack providers requested but OpenStack is disabled in config")
+            return
+        
+        # Create OpenStack connection
+        connection = create_admin_connection(
+            auth_url=openstack_config.get("keystone_url", "http://10.60.8.1:5000/v3"),
+            admin_username=openstack_config.get("admin_user", "admin"),
+            admin_password=openstack_config.get("admin_password"),
+            admin_project="admin"
+        )
+        
+        # Create providers
+        openstack_compute = OpenStackComputeProvider(connection)
+        openstack_network = NeutronNetworkProvider(connection)
+        
+        # Register with orchestrator
+        orchestrator.register_providers("openstack", openstack_compute, openstack_network)
+        
+        logger.info("OpenStack providers registered successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to register OpenStack providers: {e}")
+        raise HTTPException(status_code=503, detail=f"OpenStack initialization failed: {e}")
 
 @app.post("/api/slices/{slice_id}/vms")
 async def api_add_vm(slice_id: int, vm_req: AddVMRequest, request: Request):

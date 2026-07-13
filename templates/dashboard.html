@@ -390,8 +390,15 @@
                         <input type="text" id="newImageName" placeholder="ubuntu-22.04" class="w-full px-3 py-2 bg-gray-700 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-400 mb-1">Image URL or Path</label>
-                        <input type="text" id="newImagePath" placeholder="/var/lib/images/ubuntu-22.04.qcow2" class="w-full px-3 py-2 bg-gray-700 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none">
+                        <label class="block text-sm text-gray-400 mb-1">Image File Path</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="newImagePath" placeholder="/var/lib/images/ubuntu-22.04.qcow2" class="flex-1 px-3 py-2 bg-gray-700 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none" readonly>
+                            <input type="file" id="imageFilePicker" accept=".qcow2,.img,.raw" class="hidden" onchange="handleImageFileSelect(this)">
+                            <button onclick="document.getElementById('imageFilePicker').click()" class="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded text-sm transition whitespace-nowrap">
+                                📁 Browse
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Select a QCOW2 image file from your system</p>
                     </div>
                     <button onclick="uploadImage()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition">Add Image</button>
                 </div>
@@ -428,6 +435,22 @@
 
     <script>
         let network = null, currentSliceId = null, currentSliceData = null, deployInterval = null, selectedVMs = [], allSlices = [];
+        let isDeploying = false;  // Flag to prevent double-click
+        
+        function handleImageFileSelect(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                document.getElementById('newImagePath').value = file.name;
+                
+                // Auto-fill image name if empty
+                const nameInput = document.getElementById('newImageName');
+                if (!nameInput.value) {
+                    // Remove extension and use as name
+                    const baseName = file.name.replace(/\.(qcow2|img|raw)$/i, '');
+                    nameInput.value = baseName;
+                }
+            }
+        }
         
         // linkMode with logging to track changes
         let _linkMode = false;
@@ -1046,6 +1069,14 @@
             if (!currentSliceId) return;
             if (currentSliceData.vms.length === 0) { showToast('Cannot deploy empty slice', 'warning'); return; }
             
+            // Prevent double-click
+            if (isDeploying) {
+                showToast('⏳ Deployment already in progress...', 'warning');
+                return;
+            }
+            
+            isDeploying = true;
+            
             // Show toast instead of confirm
             showToast(`🚀 Deploying ${currentSliceData.vms.length} VMs...`, 'info');
             
@@ -1081,6 +1112,7 @@
                     
                     if (slice.status === 'deployed' || slice.status === 'design') {
                         clearInterval(deployInterval);
+                        isDeploying = false;  // Reset flag
                         
                         if (slice.status === 'deployed') {
                             updateDeployProgress('✓ Deployment completed!', 100);
@@ -1098,6 +1130,7 @@
                 
                 await loadSlices();
             } catch (err) { 
+                isDeploying = false;  // Reset flag on error
                 hideDeployProgress();
                 showToast('Deploy failed: ' + err.message, 'error'); 
             }
@@ -1106,19 +1139,31 @@
         async function deployEdition() {
             if (!currentSliceId) return;
             
-            const pendingVMs = currentSliceData.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
-            
-            if (pendingVMs.length === 0) {
-                showToast('No pending VMs to deploy', 'info');
+            // Prevent double-click
+            if (isDeploying) {
+                showToast('⏳ Deployment already in progress...', 'warning');
                 return;
             }
             
+            const pendingVMs = currentSliceData.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+            const pendingLinks = currentSliceData.links.filter(link => link.status === 'design');
+            
+            if (pendingVMs.length === 0 && pendingLinks.length === 0) {
+                showToast('No pending VMs or links to deploy', 'info');
+                return;
+            }
+            
+            isDeploying = true;
+            
             // Show toast
-            showToast(`🚀 Deploying ${pendingVMs.length} new VMs to existing slice...`, 'info');
+            const vmMsg = pendingVMs.length > 0 ? `${pendingVMs.length} VMs` : '';
+            const linkMsg = pendingLinks.length > 0 ? `${pendingLinks.length} links` : '';
+            const separator = (pendingVMs.length > 0 && pendingLinks.length > 0) ? ' and ' : '';
+            showToast(`🚀 Deploying ${vmMsg}${separator}${linkMsg}...`, 'info');
             
             try {
                 // Show progress bar
-                showDeployProgress(`Deploying ${pendingVMs.length} new VMs...`, 0);
+                showDeployProgress(`Deploying changes...`, 0);
                 
                 // Call deploy edition endpoint
                 await apiCall(`/api/slices/${currentSliceId}/deploy-edition`, { method: 'POST' });
@@ -1130,23 +1175,29 @@
                     const slice = await apiCall(`/api/slices/${currentSliceId}`);
                     
                     // Check how many VMs are still pending
-                    const stillPending = slice.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+                    const stillPendingVMs = slice.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+                    const stillPendingLinks = slice.links.filter(link => link.status === 'design');
                     
-                    if (stillPending.length === 0) {
+                    if (stillPendingVMs.length === 0 && stillPendingLinks.length === 0) {
                         clearInterval(deployInterval);
+                        isDeploying = false;  // Reset flag
                         updateDeployProgress('✓ Edition deployed!', 100);
-                        showToast('✓ New VMs deployed successfully!', 'success');
+                        showToast('✓ Changes deployed successfully!', 'success');
                         setTimeout(() => hideDeployProgress(), 2000);
                         await loadSlices();
                         await viewSlice(currentSliceId);
                     } else {
                         progress = Math.min(progress + 10, 90);
-                        updateDeployProgress(`Deploying VMs... (${stillPending.length} remaining)`, progress);
+                        const pending = [];
+                        if (stillPendingVMs.length > 0) pending.push(`${stillPendingVMs.length} VMs`);
+                        if (stillPendingLinks.length > 0) pending.push(`${stillPendingLinks.length} links`);
+                        updateDeployProgress(`Deploying... (${pending.join(', ')} remaining)`, progress);
                     }
                 }, 2000);
                 
                 await loadSlices();
             } catch (err) {
+                isDeploying = false;  // Reset flag on error
                 hideDeployProgress();
                 showToast('Deploy edition failed: ' + err.message, 'error');
             }

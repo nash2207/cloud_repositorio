@@ -55,6 +55,9 @@ class OrchestratorAPI:
         self.network_provider = network_provider
         self.vlan_trunk_manager = vlan_trunk_manager
         
+        # Provider registry for multi-cluster support
+        self._provider_registry = {}
+        
         # Cluster configuration
         self.clusters = clusters_config or db.data.get("clusters", {
             "linux": {
@@ -82,18 +85,43 @@ class OrchestratorAPI:
         # Round-robin state per cluster (fallback if GA not available)
         self.round_robin_idx = {"linux": 0}
     
+    def register_providers(self, availability_zone, compute_provider, network_provider):
+        """
+        Register providers for a specific availability zone
+        
+        This allows supporting multiple clusters (linux, openstack, etc.) with different providers
+        
+        Args:
+            availability_zone: Zone identifier (e.g., "openstack")
+            compute_provider: Compute provider instance for this zone
+            network_provider: Network provider instance for this zone
+        """
+        self._provider_registry[availability_zone] = {
+            "compute": compute_provider,
+            "network": network_provider
+        }
+        logger.info(f"Registered providers for availability zone: {availability_zone}")
+    
     def _get_cluster_config(self, availability_zone):
         """Get cluster configuration for given AZ"""
         return self.clusters.get(availability_zone, self.clusters.get("linux", {}))
     
     def _get_compute_provider(self, availability_zone):
-        """Get compute provider for given AZ (uses injected provider)"""
-        # Return injected provider (infrastructure-agnostic)
+        """Get compute provider for given AZ"""
+        # Check provider registry first (for multi-cluster support)
+        if availability_zone in self._provider_registry:
+            return self._provider_registry[availability_zone]["compute"]
+        
+        # Fallback to injected default provider
         return self.compute_provider
     
     def _get_network_provider(self, availability_zone):
-        """Get network provider for given AZ (uses injected provider)"""
-        # Return injected provider (infrastructure-agnostic)
+        """Get network provider for given AZ"""
+        # Check provider registry first (for multi-cluster support)
+        if availability_zone in self._provider_registry:
+            return self._provider_registry[availability_zone]["network"]
+        
+        # Fallback to injected default provider
         return self.network_provider
     
     def _set_bind_address(self, availability_zone):
