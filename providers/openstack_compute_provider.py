@@ -250,3 +250,46 @@ class OpenStackComputeProvider(BaseComputeProvider):
             pass
         
         return None
+    
+    def get_running_vms(self, worker_ip):
+        """
+        Get list of running VMs on a worker (OpenStack compute node)
+        
+        For OpenStack, this queries Nova for all servers and filters by
+        the hypervisor host.
+        
+        Args:
+            worker_ip: Worker/compute node IP (used to match hypervisor hostname)
+        
+        Returns:
+            list: List of VM info dicts
+        """
+        try:
+            # Query all servers from Nova
+            servers = self.connection.compute.servers(details=True)
+            
+            running_vms = []
+            for server in servers:
+                # Filter by hypervisor host if worker_ip matches
+                host = self._get_server_host(server)
+                
+                # If worker_ip is provided, only include VMs on that host
+                # Otherwise, return all VMs (for cluster-wide queries)
+                if worker_ip and host and worker_ip not in host:
+                    continue
+                
+                # Only include ACTIVE servers
+                if server.status == "ACTIVE":
+                    running_vms.append({
+                        "id": server.id,
+                        "name": server.name,
+                        "status": server.status,
+                        "host": host,
+                    })
+            
+            logger.debug(f"Found {len(running_vms)} running VMs" + (f" on {worker_ip}" if worker_ip else ""))
+            return running_vms
+            
+        except Exception as e:
+            logger.error(f"Failed to get running VMs: {e}")
+            return []
