@@ -389,13 +389,20 @@ class OrchestratorAPI:
             return False, str(e)
     
     def create_link(self, username, slice_id, vm1_id, vm2_id):
-        """Create L2 link between two VMs, automatically adding interfaces dynamically"""
+        """
+        Create L2 link between two VMs, automatically adding interfaces dynamically
+        
+        NEW BEHAVIOR (Live Editing):
+        - Links created in deployed slices stay in "design" state
+        - VMs are NOT rebooted immediately
+        - User must click "Deploy Edition" to apply pending links
+        """
         slice_data = self.db.get_slice(str(slice_id))
         
         if not slice_data or slice_data.get("owner") != username:
             return False, "Slice not found or not authorized"
         
-        # LIVE EDIT: Allow creating links in deployed slices (will reboot affected VMs)
+        # Check if slice is deployed
         is_deployed = slice_data.get("status") == "deployed"
         
         try:
@@ -436,7 +443,10 @@ class OrchestratorAPI:
                 return False, "VLAN pool exhausted"
             
             link_id = len(slice_data.get("links", [])) + 1
-            link = Link(link_id, vlan_id, vm1_id, vm1_iface_name, vm2_id, vm2_iface_name)
+            
+            # NEW: Create link in "design" state if slice is deployed
+            link_status = "design" if is_deployed else "design"  # Always design initially
+            link = Link(link_id, vlan_id, vm1_id, vm1_iface_name, vm2_id, vm2_iface_name, status=link_status)
             
             # Add new interfaces to VMs with generated MAC addresses
             from deployment_api import DeploymentAPI
@@ -457,26 +467,13 @@ class OrchestratorAPI:
             
             self.db.update_slice(slice_id, slice_data)
             
-            logger.info(f"Link {link_id} created: VM{vm1_id}.{vm1_iface_name} <-> VM{vm2_id}.{vm2_iface_name} (VLAN {vlan_id})")
-            
-            # LIVE EDIT: Reboot VMs to apply new network configuration
             if is_deployed:
-                logger.info(f"LIVE EDIT: Rebooting VMs {vm1_id} and {vm2_id} to apply new link")
-                
-                # Reboot VM1
-                reboot1_success = self._reboot_vm(vm1_dict)
-                if not reboot1_success:
-                    logger.warning(f"LIVE EDIT: VM {vm1_id} reboot had issues, but continuing...")
-                
-                # Reboot VM2
-                reboot2_success = self._reboot_vm(vm2_dict)
-                if not reboot2_success:
-                    logger.warning(f"LIVE EDIT: VM {vm2_id} reboot had issues, but continuing...")
-                
-                # Save updated slice data with new VM statuses
-                self.db.update_slice(slice_id, slice_data)
-                
-                logger.info(f"LIVE EDIT: VMs rebooted with new interfaces")
+                logger.info(f"Link {link_id} created in DESIGN state: VM{vm1_id}.{vm1_iface_name} <-> VM{vm2_id}.{vm2_iface_name} (VLAN {vlan_id}) - use Deploy Edition to apply")
+            else:
+                logger.info(f"Link {link_id} created: VM{vm1_id}.{vm1_iface_name} <-> VM{vm2_id}.{vm2_iface_name} (VLAN {vlan_id})")
+            
+            # NEW BEHAVIOR: Do NOT reboot VMs immediately in deployed slices
+            # Links stay in "design" state until user clicks "Deploy Edition"
             
             return True, link.to_dict()
         except Exception as e:
@@ -725,15 +722,186 @@ class OrchestratorAPI:
                         logger.error(f"Failed to start VM {vm_dict['vm_id']}")
                         return False, f"Failed to start VM {vm_dict['vm_id']}"
             
-            # OPENSTACK CLUSTER DEPLOYMENT (STUB)
+            # OPENSTACK CLUSTER DEPLOYMENT
             elif availability_zone == "openstack":
-                logger.warning("OpenStack deployment - STUB NOT IMPLEMENTED YET")
-                logger.info("When implemented, will deploy via OpenStack APIs:")
-                logger.info(f"  - Keystone auth at {self.clusters['openstack']['headnode']}:5000")
-                logger.info(f"  - Nova instances at {self.clusters['openstack']['headnode']}:8774")
-                logger.info(f"  - Neutron networks at {self.clusters['openstack']['headnode']}:9696")
-                logger.info("  - See providers/openstack_provider.py for implementation")
-                return False, "OpenStack deployment not implemented yet. Use 'linux' availability zone for now."
+                logger.info("=== OPENSTACK DEPLOYMENT ===")
+                logger.info(f"Using OpenStack APIs for parallel deployment")
+                
+                # OpenStack uses its own Nova scheduler - no manual placement needed
+                # VMs will be placed automatically by Nova based on available resources
+                
+                # === PHASE 1: Parallel Network Creation ===
+                logger.info("PHASE 1: Creating networks in parallel...")
+                
+                # Prepare network specifications for all links
+                network_specs = []
+                for link in slice_data.get("links", []):
+                    vlan_id = link.get("vlan_id")
+                    
+                    # Allocate subnet from pool (similar to Neutron's own allocation)
+                    subnets = network_provider.allocate_subnets(count=1)
+                    if not subnets:
+                        logger.error(f"Failed to allocate subnet for VLAN {vlan_id}")
+                        return False, f"Failed to allocate subnet for link"
+                    
+                    subnet_network = subnets[0]
+                    gateway_ip = str(list(subnet_network.hosts())[0])  # First usable IP
+                    
+                    network_specs.append({
+                        "vlan_id": vlan_id,
+                        "cidr": str(subnet_network),
+                        "gateway_ip": gateway_ip,
+                        "dhcp_enabled": True,
+                    })
+                
+                # Create all networks in parallel
+                if network_specs:
+                    network_results = network_provider.create_networks_parallel(network_specs)
+                    
+                    # Check for failures
+                    failed_networks = [
+                        vlan_id for vlan_id, (success, _, _) in network_results.items()
+                        if not success
+                    ]
+                    
+                    if failed_networks:
+                        logger.error(f"Failed to create networks for VLANs: {failed_networks}")
+                        return False, f"Failed to create networks: {failed_networks}"
+                    
+                    # Store network/subnet IDs in links
+                    for link in slice_data.get("links", []):
+                        vlan_id = link.get("vlan_id")
+                        if vlan_id in network_results:
+                            success, network_id, subnet_id = network_results[vlan_id]
+                            link["network_id"] = network_id
+                            link["subnet_id"] = subnet_id
+                    
+                    logger.info(f"Created {len(network_specs)} networks in parallel")
+                
+                # === PHASE 2: Create Ports for Each VM ===
+                logger.info("PHASE 2: Creating ports for VMs...")
+                
+                for vm_dict in slice_data.get("vms", []):
+                    vm_name = vm_dict.get("name")
+                    vm_id = vm_dict.get("vm_id")
+                    interfaces = vm_dict.get("interfaces", [])
+                    
+                    # Create ports for topology networks
+                    for iface in interfaces:
+                        vlan_id = iface.get("vlan_id")
+                        link_id = iface.get("link_id")
+                        
+                        # Skip internet interface (VLAN 400) - handle separately
+                        if vlan_id == 400:
+                            continue
+                        
+                        # Find the network for this VLAN
+                        link = next((l for l in slice_data.get("links", []) if l.get("link_id") == link_id), None)
+                        if not link:
+                            logger.warning(f"Link {link_id} not found for interface {iface.get('name')}")
+                            continue
+                        
+                        network_id = link.get("network_id")
+                        subnet_id = link.get("subnet_id")
+                        
+                        if not network_id or not subnet_id:
+                            logger.error(f"Network/subnet not found for VLAN {vlan_id}")
+                            return False, f"Network not ready for VLAN {vlan_id}"
+                        
+                        # Create port
+                        port_name = f"slice{slice_id}-vm{vm_id}-{iface.get('name')}"
+                        port_info = network_provider.create_port(network_id, subnet_id, port_name)
+                        
+                        if not port_info:
+                            logger.error(f"Failed to create port {port_name}")
+                            return False, f"Failed to create port for VM {vm_name}"
+                        
+                        # Store port info in interface
+                        iface["port_id"] = port_info["id"]
+                        iface["ip_config"] = port_info["ip_address"]
+                        iface["mac"] = port_info["mac_address"]
+                        
+                        logger.info(f"Created port {port_info['id']} for VM {vm_name} interface {iface.get('name')} (IP: {port_info['ip_address']})")
+                    
+                    # Create internet/management port
+                    has_internet = any(iface.get("vlan_id") == 400 for iface in interfaces)
+                    if has_internet:
+                        logger.info(f"Creating internet port for VM {vm_name}")
+                        internet_port = network_provider.create_internet_port(vm_name, f"slice{slice_id}")
+                        
+                        if not internet_port:
+                            logger.warning(f"Failed to create internet port for VM {vm_name}, continuing without it")
+                        else:
+                            # Add internet port to interfaces
+                            internet_iface = next((iface for iface in interfaces if iface.get("vlan_id") == 400), None)
+                            if internet_iface:
+                                internet_iface["port_id"] = internet_port["id"]
+                                internet_iface["ip_config"] = internet_port["ip_address"]
+                                internet_iface["mac"] = internet_port["mac_address"]
+                                logger.info(f"Internet port created with IP {internet_port['ip_address']}")
+                
+                # Save updated slice data with ports
+                self.db.update_slice(slice_id, slice_data)
+                
+                # === PHASE 3: Parallel VM Creation ===
+                logger.info("PHASE 3: Launching VMs in parallel...")
+                
+                # Initialize resource mapper for image/flavor ID resolution
+                from openstack.resource_mapper import OpenStackResourceMapper
+                resource_mapper = OpenStackResourceMapper(compute_provider.connection)
+                
+                # Prepare VM assignments for parallel deployment
+                vm_assignments = []
+                for vm_dict in slice_data.get("vms", []):
+                    # OpenStack: worker_ip is ignored, Nova scheduler decides placement
+                    # Map local flavor name to OpenStack Glance image ID and Nova flavor ID
+                    local_flavor_name = vm_dict.get("flavor")
+                    
+                    # Get Glance image ID
+                    image_id = resource_mapper.get_image_id(local_flavor_name)
+                    if not image_id:
+                        logger.error(f"Could not find Glance image for flavor '{local_flavor_name}'")
+                        return False, f"No Glance image available for flavor '{local_flavor_name}'"
+                    
+                    # Get Nova flavor ID
+                    flavor_id = resource_mapper.get_flavor_id(local_flavor_name)
+                    if not flavor_id:
+                        logger.error(f"Could not find Nova flavor for '{local_flavor_name}'")
+                        return False, f"No Nova flavor available for '{local_flavor_name}'"
+                    
+                    vm_dict["image_id"] = image_id
+                    vm_dict["flavor_id"] = flavor_id
+                    
+                    logger.info(f"VM {vm_dict.get('name')}: Using image {image_id}, flavor {flavor_id}")
+                    
+                    vm_assignments.append(("nova", vm_dict))  # "nova" is placeholder for worker
+                
+                # Launch all VMs in parallel
+                deployment_results = compute_provider.launch_vms_parallel(vm_assignments)
+                
+                # Process results
+                failed_vms = []
+                for vm_id, (success, server_id) in deployment_results.items():
+                    vm_dict = next((v for v in slice_data.get("vms", []) if v["vm_id"] == vm_id), None)
+                    if not vm_dict:
+                        continue
+                    
+                    if success:
+                        vm_dict["status"] = "deployed"
+                        vm_dict["server_id"] = server_id
+                        vm_dict["worker_ip"] = "openstack"  # Placeholder - actual host determined by Nova
+                        logger.info(f"VM {vm_dict['name']} deployed successfully: {server_id}")
+                    else:
+                        vm_dict["status"] = "error"
+                        failed_vms.append(vm_dict["name"])
+                        logger.error(f"VM {vm_dict['name']} deployment failed")
+                
+                if failed_vms:
+                    logger.warning(f"Some VMs failed to deploy: {failed_vms}")
+                    # Don't fail entire deployment - partial deployment is acceptable
+                    # This is part of the "error isolation" design
+                
+                logger.info(f"OpenStack deployment completed: {len(deployment_results) - len(failed_vms)}/{len(deployment_results)} VMs deployed")
             
             else:
                 return False, f"Unknown availability zone: {availability_zone}"
@@ -751,6 +919,11 @@ class OrchestratorAPI:
         """
         Deploy only the pending VMs in an already deployed slice (Deploy Edition)
         This is used when users add new VMs/topologies to a deployed slice
+        
+        NEW: Also applies pending links (in "design" state) by:
+        1. Configuring DHCP networks for design-state links FIRST
+        2. Deploying/rebooting VMs so they get IPs on new interfaces
+        3. Marking links as "deployed"
         """
         slice_data = self.db.get_slice(str(slice_id))
         
@@ -768,19 +941,52 @@ class OrchestratorAPI:
             # Set bind address for SSH connections
             self._set_bind_address(availability_zone)
             
-            logger.info(f"Deploy Edition: deploying pending VMs in slice {slice_id}")
+            logger.info(f"Deploy Edition: deploying pending VMs and links in slice {slice_id}")
             
             # Find VMs that need deployment (status != deployed OR worker_ip == PENDING)
             pending_vms = [vm for vm in slice_data.get("vms", []) 
                           if vm.get("status") != "deployed" or vm.get("worker_ip") == "PENDING"]
             
-            if not pending_vms:
-                logger.info(f"No pending VMs found in slice {slice_id}")
-                return True, "No pending VMs to deploy"
+            # Find links in design state
+            pending_links = [link for link in slice_data.get("links", [])
+                           if link.get("status") == "design"]
             
-            logger.info(f"Found {len(pending_vms)} pending VMs to deploy")
+            # Find VMs affected by pending links (need reboot to get IPs)
+            vms_needing_reboot = set()
+            for link in pending_links:
+                vms_needing_reboot.add(link.get("vm1_id"))
+                vms_needing_reboot.add(link.get("vm2_id"))
             
-            # === PHASE 1: Calculate VM Placement for pending VMs only ===
+            if not pending_vms and not pending_links:
+                logger.info(f"No pending VMs or links found in slice {slice_id}")
+                return True, "No pending VMs or links to deploy"
+            
+            logger.info(f"Found {len(pending_vms)} pending VMs and {len(pending_links)} pending links to deploy")
+            logger.info(f"{len(vms_needing_reboot)} VMs will be rebooted to apply new links")
+            
+            # === PHASE 1: Configure DHCP networks for pending links FIRST ===
+            if pending_links and availability_zone == "linux":
+                logger.info("PHASE 1: Configuring DHCP networks for pending links...")
+                
+                for link in pending_links:
+                    vlan_id = link.get("vlan_id")
+                    cidr = f"192.168.{vlan_id % 256}.0/24"
+                    gateway_ip = f"192.168.{vlan_id % 256}.1"
+                    
+                    logger.info(f"Configuring VLAN {vlan_id} for Link {link.get('link_id')} (BEFORE VM deployment)")
+                    success = network_provider.create_network(
+                        vlan_id, cidr, gateway_ip, dhcp_enabled=True
+                    )
+                    
+                    if not success:
+                        logger.error(f"Failed to configure VLAN {vlan_id} for link {link.get('link_id')}")
+                        return False, f"Failed to configure VLAN {vlan_id}"
+                
+                # Update VLAN trunk ports for new VLANs
+                logger.info("Updating VLAN trunk ports for new links...")
+                self.vlan_trunk_manager.add_slice_vlans_to_trunks(slice_data)
+            
+            # === PHASE 2: Calculate VM Placement for pending VMs only ===
             vms_to_place = []
             for vm_dict in pending_vms:
                 if vm_dict.get("worker_ip") == "PENDING":
@@ -814,8 +1020,9 @@ class OrchestratorAPI:
                 # Save updated placement
                 self.db.update_slice(slice_id, slice_data)
             
-            # === PHASE 2: Deploy only pending VMs ===
-            if availability_zone == "linux":
+            # === PHASE 3: Deploy pending VMs ===
+            if pending_vms and availability_zone == "linux":
+                logger.info("PHASE 3: Deploying pending VMs...")
                 # Create QCOW2 images and cloud-init seeds
                 from cloudinit_seed import CloudInitSeedGenerator
                 seed_generator = CloudInitSeedGenerator(self.compute_provider.executor)
@@ -866,11 +1073,36 @@ class OrchestratorAPI:
                         logger.error(f"Failed to start VM {vm_id}")
                         return False, f"Failed to start VM {vm_id}"
             
+            # === PHASE 4: Reboot VMs affected by pending links (so they get IPs) ===
+            if pending_links and vms_needing_reboot:
+                logger.info(f"PHASE 4: Rebooting {len(vms_needing_reboot)} VMs to apply new links...")
+                
+                for vm_id in vms_needing_reboot:
+                    # Find VM dict
+                    vm_dict = next((v for v in slice_data.get("vms", []) if v["vm_id"] == vm_id), None)
+                    if vm_dict and vm_dict.get("status") == "deployed" and vm_dict.get("worker_ip") != "PENDING":
+                        logger.info(f"Rebooting VM {vm_id} to apply new link interfaces...")
+                        reboot_success = self._reboot_vm(vm_dict)
+                        if not reboot_success:
+                            logger.warning(f"VM {vm_id} reboot had issues, but continuing...")
+                
+                # Mark all pending links as deployed
+                for link in pending_links:
+                    link["status"] = "deployed"
+                    logger.info(f"Link {link.get('link_id')} marked as deployed (VLAN {link.get('vlan_id')})")
+            
             # Save final state
             self.db.update_slice(slice_id, slice_data)
             
-            logger.info(f"Deploy Edition completed: {len(pending_vms)} VMs deployed")
-            return True, f"{len(pending_vms)} VMs deployed successfully"
+            result_msg = []
+            if pending_vms:
+                result_msg.append(f"{len(pending_vms)} VMs deployed")
+            if pending_links:
+                result_msg.append(f"{len(pending_links)} links applied")
+            
+            final_msg = " and ".join(result_msg) + " successfully"
+            logger.info(f"Deploy Edition completed: {final_msg}")
+            return True, final_msg
             
         except Exception as e:
             logger.error(f"Deploy Edition error: {e}")

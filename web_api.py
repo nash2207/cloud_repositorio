@@ -82,7 +82,6 @@ def set_monitoring_system(ms):
         )
         
         logger.info("Orchestrator initialized with injected providers (Hexagonal Architecture)")
-    monitoring_system = ms
     
     # Re-initialize orchestrator with monitoring system (uses same injected providers)
     if orchestrator:
@@ -798,6 +797,48 @@ async def api_get_cluster_stats(availability_zone: str, request: Request):
         logger.info(f"Cluster stats for {availability_zone}: {len(cluster_stats.get('workers', []))} workers, {cluster_stats.get('vms_count', 0)} VMs")
     except Exception as e:
         logger.error(f"Error getting cluster stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    return cluster_stats
+
+@app.get("/api/openstack/resources")
+async def api_get_openstack_resources(request: Request):
+    """Get available OpenStack images and flavors (for admin debugging)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        # Create OpenStack connection
+        from openstack.connection import create_admin_connection
+        from openstack.resource_mapper import OpenStackResourceMapper
+        
+        openstack_config = db.data.get("openstack", {})
+        
+        connection = create_admin_connection(
+            auth_url=openstack_config.get("keystone_url", "http://10.60.8.1:5000/v3"),
+            admin_username=openstack_config.get("admin_user", "admin"),
+            admin_password=openstack_config.get("admin_password"),
+            admin_project="admin"
+        )
+        
+        mapper = OpenStackResourceMapper(connection)
+        
+        images = mapper.list_images()
+        flavors = mapper.list_flavors()
+        
+        return {
+            "images": images,
+            "flavors": flavors
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get OpenStack resources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
         raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
     
     return {

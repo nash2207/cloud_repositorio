@@ -52,15 +52,16 @@ class Interface:
         return {"name": self.name, "vlan_id": self.vlan_id, "mac": self.mac, "ip_config": self.ip_config, "link_id": self.link_id}
 
 class Link:
-    def __init__(self, link_id, vlan_id, vm1_id, vm1_interface, vm2_id, vm2_interface):
+    def __init__(self, link_id, vlan_id, vm1_id, vm1_interface, vm2_id, vm2_interface, status="design"):
         self.link_id = link_id
         self.vlan_id = vlan_id
         self.vm1_id = vm1_id
         self.vm1_interface = vm1_interface
         self.vm2_id = vm2_id
         self.vm2_interface = vm2_interface
+        self.status = status  # "design" or "deployed"
     def to_dict(self):
-        return {"link_id": self.link_id, "vlan_id": self.vlan_id, "vm1_id": self.vm1_id, "vm1_interface": self.vm1_interface, "vm2_id": self.vm2_id, "vm2_interface": self.vm2_interface}
+        return {"link_id": self.link_id, "vlan_id": self.vlan_id, "vm1_id": self.vm1_id, "vm1_interface": self.vm1_interface, "vm2_id": self.vm2_id, "vm2_interface": self.vm2_interface, "status": self.status}
 
 class VM:
     def __init__(self, vm_id, name, owner, worker_ip, vnc_port, interfaces, flavor=None, qcow_image=None):

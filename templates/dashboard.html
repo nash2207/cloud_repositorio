@@ -561,13 +561,22 @@
             document.getElementById('topologyBtn').disabled = !hasSlice;  // Enable in all states
             document.getElementById('deployBtn').disabled = !hasSlice || !isDesign;
             
-            // Show "Deploy Edition" button only when slice is deployed and has pending VMs
+            // Show "Deploy Edition" button only when slice is deployed and has pending VMs or links
             const deployEditionBtn = document.getElementById('deployEditionBtn');
             if (deployEditionBtn && isDeployed && currentSliceData) {
                 const pendingVMs = currentSliceData.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
-                if (pendingVMs.length > 0) {
+                const pendingLinks = currentSliceData.links.filter(link => link.status === 'design');
+                const hasPending = pendingVMs.length > 0 || pendingLinks.length > 0;
+                
+                if (hasPending) {
                     deployEditionBtn.classList.remove('hidden');
                     deployEditionBtn.disabled = false;
+                    
+                    // Update button text to show what's pending
+                    let pendingText = [];
+                    if (pendingVMs.length > 0) pendingText.push(`${pendingVMs.length} VM${pendingVMs.length > 1 ? 's' : ''}`);
+                    if (pendingLinks.length > 0) pendingText.push(`${pendingLinks.length} link${pendingLinks.length > 1 ? 's' : ''}`);
+                    deployEditionBtn.textContent = `🚀 Deploy Edition (${pendingText.join(', ')})`;
                 } else {
                     deployEditionBtn.classList.add('hidden');
                 }
@@ -630,12 +639,49 @@
         }
 
         function drawTopology() {
-            const nodes = currentSliceData.vms.map(vm => ({ id: vm.vm_id, label: `${vm.name}\\n${vm.flavor}\\nVNC:${vm.vnc_port}`, 
-                color: currentSliceData.status === 'deployed' ? '#10b981' : currentSliceData.status === 'provisioning' ? '#f59e0b' : '#6b7280', 
-                shape: 'circle', size: 35, font: { color: '#fff', size: 12 }, borderWidth: 3, borderWidthSelected: 5 }));
-            const edges = currentSliceData.links.map((link, idx) => ({ id: `link-${idx}`, from: link.vm1_id, to: link.vm2_id, 
-                label: `VLAN ${link.vlan_id}\\n${link.vm1_interface} ↔ ${link.vm2_interface}`, 
-                color: { color: '#8b5cf6', highlight: '#a78bfa' }, font: { color: '#fff', size: 11 }, width: 3, smooth: { type: 'curvedCW', roundness: 0.2 } }));
+            const nodes = currentSliceData.vms.map(vm => {
+                // Color based on VM status (not slice status)
+                let nodeColor;
+                if (vm.status === 'deployed') {
+                    nodeColor = '#10b981';  // Green - deployed
+                } else if (vm.status === 'provisioning') {
+                    nodeColor = '#f59e0b';  // Orange - provisioning
+                } else {
+                    nodeColor = '#6b7280';  // Gray - design
+                }
+                
+                return {
+                    id: vm.vm_id, 
+                    label: `${vm.name}\\n${vm.flavor}\\nVNC:${vm.vnc_port}`, 
+                    color: nodeColor,
+                    shape: 'circle', 
+                    size: 35, 
+                    font: { color: '#fff', size: 12 }, 
+                    borderWidth: 3, 
+                    borderWidthSelected: 5
+                };
+            });
+            const edges = currentSliceData.links.map((link, idx) => {
+                // Color based on link status
+                let linkColor;
+                if (link.status === 'deployed') {
+                    linkColor = { color: '#8b5cf6', highlight: '#a78bfa' };  // Purple - deployed
+                } else {
+                    linkColor = { color: '#6b7280', highlight: '#9ca3af' };  // Gray - design
+                }
+                
+                return {
+                    id: `link-${idx}`, 
+                    from: link.vm1_id, 
+                    to: link.vm2_id, 
+                    label: `VLAN ${link.vlan_id}\\n${link.vm1_interface} ↔ ${link.vm2_interface}${link.status === 'design' ? '\\n(pending)' : ''}`, 
+                    color: linkColor,
+                    font: { color: '#fff', size: 11 }, 
+                    width: link.status === 'deployed' ? 3 : 2,
+                    dashes: link.status === 'design',  // Dashed line for design state
+                    smooth: { type: 'curvedCW', roundness: 0.2 }
+                };
+            });
             const container = document.getElementById('network');
             const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
             const options = {
