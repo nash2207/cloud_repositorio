@@ -448,7 +448,13 @@
             const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
             const options = {
                 physics: { enabled: true, barnesHut: { gravitationalConstant: -3000, springLength: 200, avoidOverlap: 0.5 } },
-                interaction: { hover: true, dragNodes: true, zoomView: true },
+                interaction: { 
+                    hover: true, 
+                    dragNodes: true, 
+                    zoomView: true,
+                    selectConnectedEdges: false,  // Don't auto-select edges
+                    multiselect: false  // Disable vis.js multi-select
+                },
                 nodes: { font: { color: '#fff' }, shadow: true },
                 edges: { font: { color: '#fff', align: 'middle' }, shadow: true }
             };
@@ -466,10 +472,13 @@
             network.on('click', (params) => { 
                 if (params.nodes.length > 0) {
                     if (linkMode) {
+                        // Prevent vis.js from handling selection
+                        network.unselectAll();
                         handleNodeClickForLink(params.nodes[0]);
                     }
                 }
             });
+        }
         }
 
         function handleNodeClickForLink(nodeId) {
@@ -482,31 +491,52 @@
 
         function highlightSelectedNodes() {
             if (!network) return;
-            const nodes = network.body.data.nodes;
             
+            // Get nodes data
+            const nodesDataSet = network.body.data.nodes;
+            
+            // Update each VM node
             currentSliceData.vms.forEach(vm => {
-                const node = nodes.get(vm.vm_id);
-                if (selectedVMs.includes(vm.vm_id)) {
-                    // Highlighted: thick yellow border
-                    node.borderWidth = 6;
-                    node.color = {
-                        background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
-                        border: '#fbbf24',
-                        highlight: { background: '#10b981', border: '#fbbf24' }
-                    };
+                const nodeId = vm.vm_id;
+                const node = nodesDataSet.get(nodeId);
+                
+                if (!node) return;
+                
+                if (selectedVMs.includes(nodeId)) {
+                    // Selected: thick yellow border
+                    nodesDataSet.update({
+                        id: nodeId,
+                        borderWidth: 6,
+                        color: {
+                            background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                            border: '#fbbf24',  // Yellow
+                            highlight: {
+                                background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                                border: '#fbbf24'
+                            }
+                        },
+                        chosen: false  // Disable vis.js selection styling
+                    });
                 } else {
-                    // Normal: thin border
-                    node.borderWidth = 3;
-                    node.color = {
-                        background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
-                        border: '#ffffff'
-                    };
+                    // Normal: thin white border
+                    nodesDataSet.update({
+                        id: nodeId,
+                        borderWidth: 3,
+                        color: {
+                            background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                            border: '#ffffff',
+                            highlight: {
+                                background: currentSliceData.status === 'deployed' ? '#10b981' : '#6b7280',
+                                border: '#ffffff'
+                            }
+                        },
+                        chosen: true
+                    });
                 }
-                nodes.update(node);
             });
             
-            // Force network redraw
-            network.redraw();
+            // Deselect all nodes in vis.js (prevent default selection styling)
+            network.unselectAll();
         }
 
         function updateSelectedVMsInfo() {

@@ -64,7 +64,7 @@ class KeystoneClient:
                 }
             }
             
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=30)
             
             if response.status_code == 201:
                 token = response.headers.get('X-Subject-Token')
@@ -113,7 +113,7 @@ class KeystoneClient:
                 }
             }
             
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
             
             if response.status_code == 201:
                 project_id = response.json()['project']['id']
@@ -152,7 +152,7 @@ class KeystoneClient:
             url = f"{self.keystone_url}/v3/projects?name={project_name}"
             headers = {"X-Auth-Token": self.admin_token}
             
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 projects = response.json().get('projects', [])
@@ -205,7 +205,7 @@ class KeystoneClient:
                 }
             }
             
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
             
             if response.status_code == 201:
                 user_id = response.json()['user']['id']
@@ -248,7 +248,7 @@ class KeystoneClient:
             url = f"{self.keystone_url}/v3/users?name={username}"
             headers = {"X-Auth-Token": self.admin_token}
             
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 users = response.json().get('users', [])
@@ -286,7 +286,7 @@ class KeystoneClient:
             url = f"{self.keystone_url}/v3/roles?name={role_name}"
             headers = {"X-Auth-Token": self.admin_token}
             
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 roles = response.json().get('roles', [])
@@ -326,7 +326,7 @@ class KeystoneClient:
             url = f"{self.keystone_url}/v3/projects/{project_id}/users/{user_id}/roles/{role_id}"
             headers = {"X-Auth-Token": self.admin_token}
             
-            response = requests.put(url, headers=headers, timeout=10)
+            response = requests.put(url, headers=headers, timeout=30)
             
             if response.status_code in [201, 204]:
                 logger.info(f"Role assigned: user={user_id}, project={project_id}, role={role_id}")
