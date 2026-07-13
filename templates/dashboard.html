@@ -831,7 +831,7 @@
                 // Open noVNC in new tab
                 window.open(consoleData.console_url, '_blank', 'width=1024,height=768');
             } catch (err) {
-                alert('Error opening console: ' + err.message);
+                showToast('Error opening console: ' + err.message, 'error');
             }
         }
 
@@ -915,8 +915,8 @@
                 });
                 cancelLinkMode(); await loadSlices(); 
                 if (currentSliceId) await viewSlice(currentSliceId);
-                alert('Link created successfully!');
-            } catch (err) { alert('Error: ' + err.message); }
+                showToast('Link created successfully!', 'info');
+            } catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         function updateTopoDescription() {
@@ -928,21 +928,61 @@
 
         async function deployCurrentSlice() {
             if (!currentSliceId) return;
-            if (currentSliceData.vms.length === 0) { alert('Cannot deploy empty slice'); return; }
-            if (!confirm(`Deploy Slice #${currentSliceId}?`)) return;
+            if (currentSliceData.vms.length === 0) { showToast('Cannot deploy empty slice', 'warning'); return; }
+            if (!confirm(`Deploy Slice #${currentSliceId}?\n\n${currentSliceData.vms.length} VMs will be deployed.`)) return;
+            
             try {
+                // Show progress bar
+                showDeployProgress('Initializing deployment...', 0);
+                showToast('🚀 Starting deployment...', 'info');
+                
+                // Start deployment (async on backend)
                 await apiCall(`/api/slices/${currentSliceId}/deploy`, { method: 'POST' });
+                
+                // Poll for status updates
+                let progress = 10;
+                showDeployProgress('Calculating VM placement...', progress);
+                
                 if (deployInterval) clearInterval(deployInterval);
                 deployInterval = setInterval(async () => {
                     const slice = await apiCall(`/api/slices/${currentSliceId}`);
+                    
+                    // Update progress based on status
+                    if (slice.status === 'provisioning') {
+                        progress = Math.min(progress + 10, 90);
+                        const messages = [
+                            'Configuring networks...',
+                            'Creating QCOW2 images...',
+                            'Generating cloud-init seeds...',
+                            'Launching VMs...',
+                            'Configuring VLAN trunks...'
+                        ];
+                        const msg = messages[Math.floor(progress / 20) % messages.length];
+                        updateDeployProgress(msg, progress);
+                    }
+                    
                     if (slice.status === 'deployed' || slice.status === 'design') {
                         clearInterval(deployInterval);
-                        await loadSlices(); await viewSlice(currentSliceId);
-                        alert(slice.status === 'deployed' ? 'Deployment completed!' : 'Deployment failed');
+                        
+                        if (slice.status === 'deployed') {
+                            updateDeployProgress('✓ Deployment completed!', 100);
+                            showToast('✓ Deployment completed successfully!', 'success');
+                            setTimeout(() => hideDeployProgress(), 2000);
+                        } else {
+                            hideDeployProgress();
+                            showToast('✗ Deployment failed: ' + (slice.deploy_error || 'Unknown error'), 'error');
+                        }
+                        
+                        await loadSlices(); 
+                        await viewSlice(currentSliceId);
                     }
-                }, 3000);
+                }, 2000); // Poll every 2 seconds
+                
                 await loadSlices();
-            } catch (err) { alert('Deploy failed: ' + err.message); }
+            } catch (err) { 
+                hideDeployProgress();
+                showToast('Deploy failed: ' + err.message, 'error'); 
+            }
         }
 
         async function deleteCurrentSlice() {
@@ -956,8 +996,8 @@
                 document.getElementById('sliceActions').classList.add('hidden');
                 if (network) network.destroy();
                 await loadSlices(); await loadQuotas();
-                alert('Slice deleted successfully');
-            } catch (err) { alert('Error: ' + err.message); }
+                showToast('Slice deleted successfully', 'info');
+            } catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         async function createSlice(e) {
@@ -979,12 +1019,12 @@
                 nameInput.value = '';
                 azInput.value = 'linux';
                 if (result.slice_id) await viewSlice(result.slice_id);
-            } catch (err) { alert('Error: ' + err.message); }
+            } catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         async function addVM(e) {
             e.preventDefault();
-            if (!currentSliceId) { alert('Please select a slice first'); return; }
+            if (!currentSliceId) { showToast('Please select a slice first', 'info'); return; }
             try {
                 await apiCall(`/api/slices/${currentSliceId}/vms`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -994,7 +1034,7 @@
                 closeModal('addVMModal'); await loadSlices(); await loadQuotas();
                 if (currentSliceId) await viewSlice(currentSliceId);
                 document.getElementById('vmName').value = ''; document.getElementById('vmInternet').checked = false;
-            } catch (err) { alert('Error: ' + err.message); }
+            } catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         async function updateVM(e) {
@@ -1018,17 +1058,17 @@
                 await viewSlice(currentSliceId);
                 
                 if (currentSliceData.status === 'deployed') {
-                    alert('✓ VM updated! VM has been rebooted with new configuration.');
+                    showToast('✓ VM updated! VM has been rebooted with new configuration.', 'info');
                 } else {
-                    alert('✓ VM updated successfully');
+                    showToast('✓ VM updated successfully', 'info');
                 }
             } catch (err) { 
-                alert('Error: ' + err.message); 
+                showToast('Error: ' + err.message, 'error'); 
             }
         }
 
         async function deleteLink(linkId) {
-            if (!currentSliceId) { alert('Please select a slice first'); return; }
+            if (!currentSliceId) { showToast('Please select a slice first', 'info'); return; }
             try {
                 const result = await apiCall(`/api/slices/${currentSliceId}/links/${linkId}`, {
                     method: 'DELETE'
@@ -1040,17 +1080,17 @@
                 await loadQuotas();
                 
                 if (currentSliceData.status === 'deployed') {
-                    alert('✓ Link deleted! VMs have been rebooted with updated configuration.');
+                    showToast('✓ Link deleted! VMs have been rebooted with updated configuration.', 'info');
                 }
             } catch (err) { 
                 console.error('Delete link error:', err);
-                alert('Error deleting link: ' + err.message); 
+                showToast('Error deleting link: ' + err.message, 'error'); 
             }
         }
 
         async function createTopology(e) {
             e.preventDefault();
-            if (!currentSliceId) { alert('Please select a slice first'); return; }
+            if (!currentSliceId) { showToast('Please select a slice first', 'info'); return; }
             const type = document.getElementById('topoType').value, numVMs = parseInt(document.getElementById('topoNumVMs').value);
             if (!confirm(`Create ${type} topology with ${numVMs} VMs?`)) return;
             try {
@@ -1060,24 +1100,24 @@
                         internet: document.getElementById('topoInternet').checked, base_name: document.getElementById('topoBaseName').value })
                 });
                 closeModal('topologyModal'); await loadSlices(); await loadQuotas(); await viewSlice(currentSliceId);
-                alert('Topology created successfully!');
-            } catch (err) { alert('Error: ' + err.message); }
+                showToast('Topology created successfully!', 'info');
+            } catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         async function exportSlice() {
-            if (!currentSliceId) { alert('No slice selected'); return; }
+            if (!currentSliceId) { showToast('No slice selected', 'info'); return; }
             try {
                 const data = await apiCall(`/api/slices/${currentSliceId}/export`);
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob), a = document.createElement('a');
                 a.href = url; a.download = `slice_${currentSliceId}_export.json`; a.click(); URL.revokeObjectURL(url);
-                alert('Slice exported successfully!');
-            } catch (err) { alert('Export error: ' + err.message); }
+                showToast('Slice exported successfully!', 'info');
+            } catch (err) { showToast('Export error: ' + err.message, 'error'); }
         }
 
         async function importSlice() {
             const jsonText = document.getElementById('importJSON').value.trim();
-            if (!jsonText) { alert('Please paste JSON data'); return; }
+            if (!jsonText) { showToast('Please paste JSON data', 'info'); return; }
             try {
                 const jsonData = JSON.parse(jsonText);
                 const result = await apiCall('/api/slices/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonData) });
@@ -1085,13 +1125,13 @@
                 await loadSlices(); await loadQuotas();
                 if (result.slice_id) await viewSlice(result.slice_id);
                 alert(`Slice imported! ${result.vms} VMs, ${result.links} links created.`);
-            } catch (err) { alert('Import error: ' + err.message); }
+            } catch (err) { showToast('Import error: ' + err.message, 'error'); }
         }
 
         async function cleanupOrphaned() {
             if (!confirm('Cleanup orphaned VMs?')) return;
-            try { await apiCall('/api/cleanup-orphaned', { method: 'POST' }); await loadSlices(); await loadQuotas(); alert('Cleanup completed'); }
-            catch (err) { alert('Error: ' + err.message); }
+            try { await apiCall('/api/cleanup-orphaned', { method: 'POST' }); await loadSlices(); await loadQuotas(); showToast('Cleanup completed', 'info'); }
+            catch (err) { showToast('Error: ' + err.message, 'error'); }
         }
 
         // ============= User Management Functions (Admin Only) =============
@@ -1129,7 +1169,7 @@
                     </div>
                 `).join('');
             } catch (err) {
-                alert('Error loading users: ' + err.message);
+                showToast('Error loading users: ' + err.message, 'error');
             }
         }
 
@@ -1140,7 +1180,7 @@
             const quota = parseInt(document.getElementById('newQuota').value);
             
             if (!username || !password) {
-                alert('Username and password are required');
+                showToast('Username and password are required', 'info');
                 return;
             }
             
@@ -1160,7 +1200,7 @@
                 await loadUsers();
                 alert(`User '${username}' created successfully!`);
             } catch (err) {
-                alert('Error creating user: ' + err.message);
+                showToast('Error creating user: ' + err.message, 'error');
             }
         }
 
@@ -1172,7 +1212,7 @@
                 await loadUsers();
                 alert(`User '${username}' deleted successfully`);
             } catch (err) {
-                alert('Error deleting user: ' + err.message);
+                showToast('Error deleting user: ' + err.message, 'error');
             }
         }
 

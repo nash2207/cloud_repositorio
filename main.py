@@ -226,7 +226,7 @@ def run_both():
 
 
 def main():
-    """Main entry point with mode selection"""
+    """Main entry point - defaults to Web mode"""
     global monitoring_system_global
     
     parser = argparse.ArgumentParser(
@@ -234,9 +234,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py              # Interactive mode selection
+  python main.py              # Start Web mode (default)
   python main.py --cli        # Start CLI only
-  python main.py --web        # Start Web only
+  python main.py --web        # Start Web only (same as default)
   python main.py --both       # Start both CLI and Web
         """
     )
@@ -265,37 +265,14 @@ Examples:
     executor, monitoring_system = initialize_system()
     monitoring_system_global = monitoring_system  # Store globally
     
-    # Determine mode
+    # Determine mode - DEFAULT TO WEB
     if args.cli:
         run_cli()
-    elif args.web:
-        run_web(monitoring_system)
     elif args.both:
         run_both()
     else:
-        # Interactive mode selection
-        print("\n" + "="*60)
-        print("🚀 Slice Manager - Network Slice Orchestrator")
-        print("="*60)
-        print("Select interface mode:")
-        print("  1. CLI   - Command Line Interface only")
-        print("  2. Web   - Web Interface only (http://0.0.0.0:8080)")
-        print("  3. Both  - CLI + Web simultaneously")
-        print("="*60)
-        
-        while True:
-            choice = input("\nEnter choice (1, 2, or 3): ").strip()
-            if choice == "1":
-                run_cli()
-                break
-            elif choice == "2":
-                run_web(monitoring_system)
-                break
-            elif choice == "3":
-                run_both()
-                break
-            else:
-                print("❌ Invalid choice. Please enter 1, 2, or 3.")
+        # Default to Web mode (no prompt)
+        run_web(monitoring_system)
 
 
 if __name__ == "__main__":

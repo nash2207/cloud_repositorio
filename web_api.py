@@ -507,6 +507,7 @@ async def api_delete_link(slice_id: int, link_id: int, request: Request):
 
 @app.post("/api/slices/{slice_id}/deploy")
 async def api_deploy_slice(slice_id: int, request: Request):
+    """Deploy slice asynchronously with progress updates"""
     user = verify_session(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -518,20 +519,36 @@ async def api_deploy_slice(slice_id: int, request: Request):
     if slice_data.get("owner") != user:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    # Set status to provisioning
+    # Set status to provisioning immediately
     slice_data["status"] = "provisioning"
     db.update_slice(slice_id, slice_data)
     
-    # Deploy synchronously (in production use background tasks)
-    success, msg = orchestrator.deploy_slice(user, slice_id)
+    # Return immediately - deployment happens in background
+    # Frontend will poll /api/slices/{slice_id} for status updates
+    logger.info(f"Starting async deployment of slice {slice_id}")
     
-    if not success:
-        # Revert to design on failure
-        slice_data["status"] = "design"
-        db.update_slice(slice_id, slice_data)
-        raise HTTPException(status_code=400, detail=msg)
+    # Deploy in background thread (FastAPI will handle it)
+    import threading
+    def deploy_background():
+        try:
+            success, msg = orchestrator.deploy_slice(user, slice_id)
+            if not success:
+                # Revert to design on failure
+                slice_data_updated = db.get_slice(str(slice_id))
+                slice_data_updated["status"] = "design"
+                slice_data_updated["deploy_error"] = msg
+                db.update_slice(slice_id, slice_data_updated)
+                logger.error(f"Deployment failed for slice {slice_id}: {msg}")
+        except Exception as e:
+            logger.error(f"Deployment exception for slice {slice_id}: {e}")
+            slice_data_updated = db.get_slice(str(slice_id))
+            slice_data_updated["status"] = "design"
+            slice_data_updated["deploy_error"] = str(e)
+            db.update_slice(slice_id, slice_data_updated)
     
-    return {"success": True, "message": msg}
+    threading.Thread(target=deploy_background, daemon=True).start()
+    
+    return {"success": True, "message": "Deployment started", "status": "provisioning"}
 
 @app.delete("/api/slices/{slice_id}")
 async def api_delete_slice(slice_id: int, request: Request):
