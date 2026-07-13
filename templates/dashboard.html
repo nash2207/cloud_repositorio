@@ -258,8 +258,8 @@
         </div>
     </div>
 
-    <div id="createLinkModal" class="modal">
-        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl" onclick="event.stopPropagation()">
+    <div id="createLinkModal" class="modal" style="pointer-events: none;">
+        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl" style="pointer-events: auto;" onclick="event.stopPropagation();">
             <h2 class="text-xl font-bold mb-4">Create Link</h2>
             <p class="text-sm text-gray-400 mb-2">⚠️ Click two VMs behind this dialog to connect them</p>
             <p class="text-sm text-blue-400 mb-4">Selected: <span id="selectedVMsInfo">None</span></p>
