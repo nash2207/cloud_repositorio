@@ -19,7 +19,7 @@ clusters:
 # OpenStack configuration (for tenant provisioning)
 openstack:
   enabled: true
-  keystone_url: "http://controller:5000"  # Resolves to 10.60.8.1
+  keystone_url: "http://10.60.8.1:5000"  # OpenStack controller on ens5 network
   admin_user: "admin"
   admin_password: "25014f657b2a64498ed1ab43d2d85841"
   default_domain: "default"

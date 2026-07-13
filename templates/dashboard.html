@@ -462,44 +462,76 @@
             network = new vis.Network(container, data, options);
             
             // Double-click opens VM edit modal
-            network.on('doubleClick', (params) => { 
+            network.on('doubleClick', (params) => {
+                console.log('Double-click event:', params);
                 if (params.nodes.length > 0 && !linkMode) {
+                    console.log('Opening edit modal for VM:', params.nodes[0]);
                     openEditVMModal(params.nodes[0]);
                 }
             });
             
             // Single click for link mode selection
-            network.on('click', (params) => { 
+            network.on('click', (params) => {
+                console.log('Click event:', params);
+                console.log('Link mode active:', linkMode);
+                
                 if (params.nodes.length > 0 && linkMode) {
                     // Handle link mode selection
+                    console.log('Node clicked in link mode:', params.nodes[0]);
                     handleNodeClickForLink(params.nodes[0]);
                     // Immediately clear vis.js selection to prevent interference
                     setTimeout(() => network.unselectAll(), 0);
                 } else if (params.nodes.length === 0 && linkMode) {
                     // Clicked on empty space - don't deselect our custom selection
+                    console.log('Empty space clicked in link mode');
                     setTimeout(() => network.unselectAll(), 0);
                 }
             });
             
             // Prevent vis.js from handling selection during link mode
             network.on('selectNode', (params) => {
+                console.log('selectNode event:', params);
                 if (linkMode) {
                     // Immediately deselect to prevent vis.js interference
+                    console.log('Blocking vis.js selection in link mode');
                     setTimeout(() => network.unselectAll(), 0);
                 }
             });
         }
 
         function handleNodeClickForLink(nodeId) {
-            if (selectedVMs.includes(nodeId)) selectedVMs = selectedVMs.filter(id => id !== nodeId);
-            else if (selectedVMs.length < 2) selectedVMs.push(nodeId);
+            console.log('=== VM SELECTION FOR LINK ===');
+            console.log('Clicked VM ID:', nodeId);
+            console.log('Currently selected VMs:', selectedVMs);
+            
+            if (selectedVMs.includes(nodeId)) {
+                console.log('VM already selected, deselecting...');
+                selectedVMs = selectedVMs.filter(id => id !== nodeId);
+            } else if (selectedVMs.length < 2) {
+                console.log('Adding VM to selection...');
+                selectedVMs.push(nodeId);
+            } else {
+                console.log('Maximum 2 VMs already selected, ignoring click');
+            }
+            
+            console.log('Selected VMs after click:', selectedVMs);
+            console.log('Calling highlightSelectedNodes()...');
             highlightSelectedNodes();
+            
+            console.log('Updating selected VMs info...');
             updateSelectedVMsInfo();
-            document.getElementById('confirmLinkBtn').disabled = selectedVMs.length !== 2;
+            
+            const confirmBtn = document.getElementById('confirmLinkBtn');
+            confirmBtn.disabled = selectedVMs.length !== 2;
+            console.log('Confirm button disabled:', confirmBtn.disabled);
+            console.log('=========================');
         }
 
         function highlightSelectedNodes() {
             if (!network) return;
+            
+            console.log('=== HIGHLIGHTING SELECTED NODES ===');
+            console.log('Selected VMs:', selectedVMs);
             
             // Get nodes data
             const nodesDataSet = network.body.data.nodes;
@@ -512,9 +544,15 @@
                 const nodeId = vm.vm_id;
                 const node = nodesDataSet.get(nodeId);
                 
-                if (!node) return;
+                if (!node) {
+                    console.log(`Node ${nodeId} not found in dataset`);
+                    return;
+                }
                 
-                if (selectedVMs.includes(nodeId)) {
+                const isSelected = selectedVMs.includes(nodeId);
+                console.log(`VM ${nodeId} (${vm.name}): ${isSelected ? 'SELECTED' : 'not selected'}`);
+                
+                if (isSelected) {
                     // Selected: thick yellow border
                     nodesDataSet.update({
                         id: nodeId,
@@ -547,8 +585,11 @@
                 }
             });
             
+            console.log('Forcing network redraw...');
             // Force network redraw to apply changes immediately
             network.redraw();
+            console.log('Highlight complete');
+            console.log('===================================');
         }
 
         function updateSelectedVMsInfo() {
@@ -601,12 +642,30 @@
 
         function startLinkMode() {
             if (!currentSliceId || currentSliceData.status !== 'design') { alert('Can only create links in design state'); return; }
-            linkMode = true; selectedVMs = []; updateSelectedVMsInfo();
+            console.log('=== STARTING LINK MODE ===');
+            linkMode = true; 
+            selectedVMs = []; 
+            console.log('Link mode:', linkMode);
+            console.log('Selected VMs cleared:', selectedVMs);
+            updateSelectedVMsInfo();
             document.getElementById('confirmLinkBtn').disabled = true;
             openModal('createLinkModal');
+            console.log('==========================');
         }
 
-        function cancelLinkMode() { linkMode = false; selectedVMs = []; closeModal('createLinkModal'); if (network) drawTopology(); }
+        function cancelLinkMode() { 
+            console.log('=== CANCELING LINK MODE ===');
+            linkMode = false; 
+            selectedVMs = []; 
+            console.log('Link mode:', linkMode);
+            console.log('Selected VMs cleared:', selectedVMs);
+            closeModal('createLinkModal'); 
+            if (network) {
+                console.log('Redrawing topology...');
+                drawTopology();
+            }
+            console.log('===========================');
+        }
 
         async function confirmLinkCreation() {
             if (selectedVMs.length !== 2) return;
