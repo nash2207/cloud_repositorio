@@ -41,7 +41,7 @@ class OpenStackComputeProvider(BaseComputeProvider):
                 - name: VM name
                 - image_id: OpenStack image ID (from Glance)
                 - flavor_id: OpenStack flavor ID
-                - interfaces: List of interface dicts with port IDs
+                - openstack_networks: List of network dicts with network_id
         
         Returns:
             tuple: (success: bool, server_id or None)
@@ -50,21 +50,22 @@ class OpenStackComputeProvider(BaseComputeProvider):
             vm_name = vm_dict.get("name")
             image_id = vm_dict.get("image_id")
             flavor_id = vm_dict.get("flavor_id")
-            interfaces = vm_dict.get("interfaces", [])
+            openstack_networks = vm_dict.get("openstack_networks", [])
             
-            # Build networks list from pre-created ports
+            # Build networks list for Nova (using network IDs, not ports)
+            # Nova will auto-create ports and bind them to the assigned host
             networks = []
-            for iface in interfaces:
-                port_id = iface.get("port_id")
-                if port_id:
-                    networks.append({"port": port_id})
+            for net_info in openstack_networks:
+                network_id = net_info.get("network_id")
+                if network_id:
+                    networks.append({"uuid": network_id})
             
             if not networks:
-                logger.error(f"VM {vm_name} has no network ports")
+                logger.error(f"VM {vm_name} has no networks configured")
                 return False, None
             
             # Create server using Nova API
-            logger.info(f"Creating VM {vm_name} with image {image_id}, flavor {flavor_id}")
+            logger.info(f"Creating VM {vm_name} with image {image_id}, flavor {flavor_id}, {len(networks)} network(s)")
             
             server = self.connection.compute.create_server(
                 name=vm_name,
