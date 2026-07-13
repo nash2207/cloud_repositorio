@@ -142,6 +142,22 @@
                     <button onclick="deleteCurrentSlice()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm transition">🗑️ Delete</button>
                 </div>
             </div>
+            
+            <!-- Link Mode Banner -->
+            <div id="linkModeBanner" class="hidden bg-yellow-600 border-b-4 border-yellow-700 px-6 py-4">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900">🔗 Link Mode Active</h3>
+                        <p class="text-sm text-gray-800">Click on TWO VMs in the topology below to connect them</p>
+                        <p class="text-sm text-gray-900 font-semibold mt-1">Selected: <span id="selectedVMsInfo2">None</span></p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="event.stopPropagation(); confirmLinkCreation2();" id="confirmLinkBtn2" disabled class="bg-purple-700 hover:bg-purple-800 px-6 py-2 rounded transition disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold">Create Link</button>
+                        <button onclick="event.stopPropagation(); cancelLinkMode();" class="bg-gray-700 hover:bg-gray-800 px-6 py-2 rounded transition text-white font-bold">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            
             <div class="flex-1 p-6"><div id="network" class="w-full h-full"></div></div>
             <div id="emptyState" class="flex-1 flex items-center justify-center">
                 <div class="text-center">
@@ -559,9 +575,15 @@
             console.log('Updating selected VMs info...');
             updateSelectedVMsInfo();
             
+            // Update both buttons (modal and banner)
             const confirmBtn = document.getElementById('confirmLinkBtn');
-            confirmBtn.disabled = selectedVMs.length !== 2;
-            console.log('Confirm button disabled:', confirmBtn.disabled);
+            const confirmBtn2 = document.getElementById('confirmLinkBtn2');
+            const isReady = selectedVMs.length === 2;
+            
+            if (confirmBtn) confirmBtn.disabled = !isReady;
+            if (confirmBtn2) confirmBtn2.disabled = !isReady;
+            
+            console.log('Confirm buttons disabled:', !isReady);
             console.log('=========================');
         }
 
@@ -632,8 +654,21 @@
 
         function updateSelectedVMsInfo() {
             const info = document.getElementById('selectedVMsInfo');
-            info.textContent = selectedVMs.length === 0 ? 'None' : 
+            const info2 = document.getElementById('selectedVMsInfo2');
+            const text = selectedVMs.length === 0 ? 'None' : 
                 selectedVMs.map(id => { const vm = currentSliceData.vms.find(v => v.vm_id === id); return vm ? vm.name : id; }).join(', ');
+            
+            if (info) info.textContent = text;
+            if (info2) info2.textContent = text;
+        }
+        
+        function confirmLinkCreation2() {
+            console.log('=== confirmLinkCreation2() called ===');
+            if (selectedVMs.length !== 2) {
+                console.log('Cannot create link: need exactly 2 VMs, have', selectedVMs.length);
+                return;
+            }
+            confirmLinkCreation();
         }
 
         function openEditVMModal(vmId) {
@@ -701,18 +736,19 @@
             
             // Visual feedback: Change button to show link mode is active
             const linkBtn = document.getElementById('linkModeBtn');
-            linkBtn.textContent = '⚠️ Link Mode Active';
-            linkBtn.className = 'w-full bg-orange-600 hover:bg-orange-700 py-2 rounded transition text-sm font-bold';
+            linkBtn.textContent = '❌ Cancel Link Mode';
+            linkBtn.className = 'w-full bg-red-600 hover:bg-red-700 py-2 rounded transition text-sm font-bold';
+            linkBtn.onclick = function(e) { e.preventDefault(); e.stopPropagation(); cancelLinkMode(); };
+            
+            // Show banner instead of modal
+            const banner = document.getElementById('linkModeBanner');
+            banner.classList.remove('hidden');
             
             updateSelectedVMsInfo();
-            document.getElementById('confirmLinkBtn').disabled = true;
-            
-            console.log('About to open modal...');
-            openModal('createLinkModal');
+            document.getElementById('confirmLinkBtn2').disabled = true;
             
             console.log('✓ Link mode started - Click on VMs to select them');
-            console.log('✓ Modal should now be open, linkMode =', linkMode);
-            console.log('✓ Now you can click on VMs through the semi-transparent modal');
+            console.log('✓ Banner shown, linkMode =', linkMode);
             console.log('==========================');
         }
 
@@ -730,8 +766,12 @@
             const linkBtn = document.getElementById('linkModeBtn');
             linkBtn.textContent = '🔗 Create Link';
             linkBtn.className = 'w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded transition text-sm';
+            linkBtn.onclick = function(e) { startLinkMode(e); };
             
-            closeModal('createLinkModal'); 
+            // Hide banner
+            const banner = document.getElementById('linkModeBanner');
+            banner.classList.add('hidden');
+            
             if (network) {
                 console.log('Redrawing topology...');
                 drawTopology();
