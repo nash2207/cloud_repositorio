@@ -258,8 +258,8 @@
         </div>
     </div>
 
-    <div id="createLinkModal" class="modal">
-        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl">
+    <div id="createLinkModal" class="modal" onclick="if(event.target === this) { console.log('Modal background clicked - ignoring'); event.stopPropagation(); }">
+        <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4">Create Link</h2>
             <p class="text-sm text-gray-400 mb-2">Click two VMs in the topology to connect them</p>
             <p class="text-sm text-blue-400 mb-4">Selected: <span id="selectedVMsInfo">None</span></p>
@@ -348,8 +348,19 @@
             if (!res.ok) throw new Error(await res.text() || res.statusText); 
             return res.json(); 
         }
-        function openModal(id) { document.getElementById(id).classList.add('active'); }
-        function closeModal(id) { document.getElementById(id).classList.remove('active'); selectedVMs = []; updateSelectedVMsInfo(); }
+        function openModal(id) { 
+            console.log('Opening modal:', id);
+            document.getElementById(id).classList.add('active'); 
+        }
+        function closeModal(id) { 
+            console.log('Closing modal:', id);
+            document.getElementById(id).classList.remove('active'); 
+            // Only clear selectedVMs if not in link mode (link mode has its own cleanup)
+            if (id !== 'createLinkModal' && !linkMode) {
+                selectedVMs = []; 
+                updateSelectedVMsInfo(); 
+            }
+        }
         async function logout() { await apiCall('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
 
         async function loadQuotas() {
@@ -657,8 +668,10 @@
         }
 
         function startLinkMode() {
+            console.log('=== startLinkMode() CALLED ===');
             if (!currentSliceId || currentSliceData.status !== 'design') { 
                 alert('Can only create links in design state'); 
+                console.log('Cannot start link mode: wrong state');
                 return; 
             }
             console.log('=== STARTING LINK MODE ===');
@@ -674,12 +687,18 @@
             
             updateSelectedVMsInfo();
             document.getElementById('confirmLinkBtn').disabled = true;
+            
+            console.log('About to open modal...');
             openModal('createLinkModal');
             console.log('✓ Link mode started - Click on VMs to select them');
+            console.log('✓ Modal should now be open, linkMode =', linkMode);
             console.log('==========================');
         }
 
         function cancelLinkMode() { 
+            console.log('=== cancelLinkMode() CALLED ===');
+            console.log('Stack trace:');
+            console.trace();
             console.log('=== CANCELING LINK MODE ===');
             linkMode = false; 
             selectedVMs = []; 
