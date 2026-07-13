@@ -410,20 +410,6 @@
                 <p class="text-xs text-gray-400 mb-3">Manage base images for VM creation</p>
                 <div id="imageList" class="space-y-2">
                     <!-- Populated by JavaScript -->
-                    <div class="bg-gray-700 p-3 rounded flex justify-between items-center">
-                        <div>
-                            <p class="text-sm font-semibold">cirros</p>
-                            <p class="text-xs text-gray-400">/var/lib/images/cirros-0.5.2-x86_64-disk.img</p>
-                        </div>
-                        <span class="text-xs bg-green-600 px-2 py-1 rounded">Default</span>
-                    </div>
-                    <div class="bg-gray-700 p-3 rounded flex justify-between items-center">
-                        <div>
-                            <p class="text-sm font-semibold">ubuntu</p>
-                            <p class="text-xs text-gray-400">/var/lib/images/ubuntu-22.04-server-cloudimg-amd64.img</p>
-                        </div>
-                        <span class="text-xs bg-green-600 px-2 py-1 rounded">Default</span>
-                    </div>
                 </div>
             </div>
             
@@ -1378,10 +1364,62 @@
                 showToast(`✓ Image '${imageName}' added successfully!`, 'success');
                 document.getElementById('newImageName').value = '';
                 document.getElementById('newImagePath').value = '';
+                document.getElementById('imageFilePicker').value = '';
                 
-                // Reload image list would go here if you implement it
+                // Reload image list
+                await loadImages();
             } catch (err) {
                 showToast('Error adding image: ' + err.message, 'error');
+            }
+        }
+
+        async function loadImages() {
+            try {
+                const data = await apiCall('/api/images');
+                const imageList = document.getElementById('imageList');
+                
+                if (!data.images || data.images.length === 0) {
+                    imageList.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">No images available</p>';
+                    return;
+                }
+                
+                imageList.innerHTML = data.images.map(img => `
+                    <div class="bg-gray-700 p-3 rounded flex justify-between items-center">
+                        <div class="flex-1">
+                            <p class="text-sm font-semibold">${img.name}</p>
+                            <p class="text-xs text-gray-400">${img.path}</p>
+                            <p class="text-xs text-gray-500 mt-1">${img.cores} cores, ${img.ram_gb}GB RAM, ${img.disk_gb}GB disk</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <span class="text-xs bg-green-600 px-2 py-1 rounded">Active</span>
+                            <button onclick="deleteImage('${img.name}')" class="text-red-400 hover:text-red-300 text-sm">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Error loading images:', err);
+                showToast('Error loading images: ' + err.message, 'error');
+            }
+        }
+
+        async function deleteImage(imageName) {
+            showToast(`🗑️ Deleting image '${imageName}'...`, 'warning');
+            
+            try {
+                await apiCall(`/api/images/${imageName}`, { method: 'DELETE' });
+                showToast(`✓ Image '${imageName}' deleted`, 'success');
+                await loadImages();
+            } catch (err) {
+                showToast('Error deleting image: ' + err.message, 'error');
+            }
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+            if (modalId === 'imageManagerModal') {
+                loadImages();
             }
         }
 

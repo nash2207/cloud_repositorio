@@ -987,6 +987,34 @@ async def api_list_images(request: Request):
     
     return {"images": images}
 
+@app.delete("/api/images/{image_name}")
+async def api_delete_image(image_name: str, request: Request):
+    """Delete an image (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from models import Flavor
+    from audit_log import log_admin_action
+    
+    if image_name not in Flavor.FLAVORS:
+        raise HTTPException(status_code=404, detail=f"Image '{image_name}' not found")
+    
+    # Prevent deletion of default images
+    if image_name in ["ubuntu", "cirros"]:
+        raise HTTPException(status_code=400, detail=f"Cannot delete default image '{image_name}'")
+    
+    del Flavor.FLAVORS[image_name]
+    
+    log_admin_action(user, f"Deleted image '{image_name}'", {"image": image_name})
+    logger.info(f"Admin {user} deleted image: {image_name}")
+    
+    return {"success": True, "message": f"Image '{image_name}' deleted"}
+
 # ============= Audit Logs API =============
 @app.get("/api/audit/logs")
 async def api_get_audit_logs(request: Request, limit: int = 100, event_type: str = None):
