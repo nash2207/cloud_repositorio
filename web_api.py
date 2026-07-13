@@ -1008,12 +1008,6 @@ async def api_get_audit_logs(request: Request, limit: int = 100, event_type: str
         "logs": logs,
         "summary": summary
     }
-        raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
-    
-    return {
-        "cluster": cluster_stats,
-        "timestamp": time.time()
-    }
 
 @app.get("/api/monitoring/vm/{vm_id}")
 async def api_get_vm_stats(vm_id: int, request: Request):
