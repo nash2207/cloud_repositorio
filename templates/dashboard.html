@@ -107,7 +107,7 @@
                 <button onclick="openModal('createSliceModal')" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded transition text-sm">➕ Create Slice</button>
                 <button onclick="openModal('addVMModal')" id="addVMBtn" disabled class="w-full bg-green-600 hover:bg-green-700 py-2 rounded transition text-sm disabled:opacity-50 disabled:cursor-not-allowed">🖥️ Add VM</button>
                 <button onclick="openModal('topologyModal')" id="topologyBtn" disabled class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded transition text-sm disabled:opacity-50 disabled:cursor-not-allowed">🔷 Create Topology</button>
-                <button onclick="startLinkMode()" id="linkModeBtn" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded transition text-sm">🔗 Create Link</button>
+                <button onclick="startLinkMode(event)" id="linkModeBtn" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded transition text-sm">🔗 Create Link</button>
             </div>
             <div class="p-4 border-b border-gray-700">
                 <h3 class="text-sm font-semibold text-gray-400 mb-3">RESOURCE USAGE</h3>
@@ -667,8 +667,15 @@
             }
         }
 
-        function startLinkMode() {
+        function startLinkMode(event) {
             console.log('=== startLinkMode() CALLED ===');
+            // Prevent event propagation to avoid triggering other click handlers
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                console.log('Event propagation stopped');
+            }
+            
             if (!currentSliceId || currentSliceData.status !== 'design') { 
                 alert('Can only create links in design state'); 
                 console.log('Cannot start link mode: wrong state');
