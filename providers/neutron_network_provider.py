@@ -26,7 +26,7 @@ class NeutronNetworkProvider(BaseNetworkProvider):
     DEFAULT_PREFIX_LENGTH = 29  # /29 = 8 IPs per network
     
     # Internet/management network (pre-existing in OpenStack)
-    INTERNET_NETWORK_NAME = "provider"  # External provider network
+    INTERNET_NETWORK_NAME = "external"  # External provider network for internet/SSH access
     INTERNET_GATEWAY = "10.60.8.126"
     
     def __init__(self, connection):
