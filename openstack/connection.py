@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 # Import OpenStack SDK with proper error handling
 try:
     import openstack
-    from openstack import connection
     HAS_OPENSTACK = True
 except ImportError as e:
     HAS_OPENSTACK = False
@@ -56,8 +55,8 @@ def create_admin_connection(auth_url=None, admin_username=None, admin_password=N
     logger.info(f"Creating OpenStack connection to {auth_url} as {admin_username}")
     
     try:
-        # Create connection using OpenStack SDK connection factory
-        conn = connection.Connection(
+        # Create connection using OpenStack SDK
+        conn = openstack.connect(
             auth_url=auth_url,
             project_name=admin_project,
             username=admin_username,
@@ -105,7 +104,7 @@ def create_project_connection(auth_url, project_id, username, password):
     logger.info(f"Creating scoped connection for project {project_id}")
     
     try:
-        conn = connection.Connection(
+        conn = openstack.connect(
             auth_url=auth_url,
             project_id=project_id,
             username=username,

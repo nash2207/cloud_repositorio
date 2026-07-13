@@ -331,7 +331,7 @@
                     return;
                 }
                 
-                updateDashboard(data.cluster);
+                updateDashboard(data);
             } catch (error) {
                 console.error('Error fetching cluster data:', error);
                 // Show error in UI
@@ -342,16 +342,17 @@
             }
         }
 
-        function updateDashboard(cluster) {
-            console.log('Updating dashboard with:', cluster);
+        function updateDashboard(data) {
+            console.log('Updating dashboard with:', data);
             
             // Validate cluster data structure
-            if (!cluster.workers || !Array.isArray(cluster.workers)) {
+            if (!data.workers || !Array.isArray(data.workers)) {
                 console.error('Invalid cluster data - missing or invalid workers array');
                 return;
             }
             
             // Update summary cards
+            const cluster = data;
             document.getElementById('totalWorkers').textContent = cluster.workers.length || 0;
             document.getElementById('totalVMs').textContent = cluster.vms_count || 0;
             document.getElementById('totalCPU').textContent = ((cluster.total_usage?.cpu?.mean || 0).toFixed(1)) + '%';
