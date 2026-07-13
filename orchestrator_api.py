@@ -747,6 +747,135 @@ class OrchestratorAPI:
             logger.error(f"Deploy error: {e}")
             return False, str(e)
     
+    def deploy_slice_edition(self, username, slice_id):
+        """
+        Deploy only the pending VMs in an already deployed slice (Deploy Edition)
+        This is used when users add new VMs/topologies to a deployed slice
+        """
+        slice_data = self.db.get_slice(str(slice_id))
+        
+        if not slice_data or slice_data.get("owner") != username:
+            return False, "Slice not found or not authorized"
+        
+        if slice_data.get("status") != "deployed":
+            return False, "Slice must be deployed to use Deploy Edition"
+        
+        try:
+            availability_zone = slice_data.get("availability_zone", "linux")
+            compute_provider = self._get_compute_provider(availability_zone)
+            network_provider = self._get_network_provider(availability_zone)
+            
+            # Set bind address for SSH connections
+            self._set_bind_address(availability_zone)
+            
+            logger.info(f"Deploy Edition: deploying pending VMs in slice {slice_id}")
+            
+            # Find VMs that need deployment (status != deployed OR worker_ip == PENDING)
+            pending_vms = [vm for vm in slice_data.get("vms", []) 
+                          if vm.get("status") != "deployed" or vm.get("worker_ip") == "PENDING"]
+            
+            if not pending_vms:
+                logger.info(f"No pending VMs found in slice {slice_id}")
+                return True, "No pending VMs to deploy"
+            
+            logger.info(f"Found {len(pending_vms)} pending VMs to deploy")
+            
+            # === PHASE 1: Calculate VM Placement for pending VMs only ===
+            vms_to_place = []
+            for vm_dict in pending_vms:
+                if vm_dict.get("worker_ip") == "PENDING":
+                    vms_to_place.append({
+                        'vm_id': vm_dict['vm_id'],
+                        'flavor': vm_dict['flavor']
+                    })
+            
+            if vms_to_place:
+                logger.info(f"Calculating placement for {len(vms_to_place)} VMs...")
+                
+                placement_ga = self.linux_placement_ga if availability_zone == "linux" else None
+                
+                if placement_ga and self.monitoring_system:
+                    # Use Genetic Algorithm
+                    placement, explanation = placement_ga.calculate_placement(vms_to_place)
+                    logger.info(f"GA Placement result: {placement}")
+                    
+                    # Apply placement
+                    for vm_dict in pending_vms:
+                        if vm_dict['vm_id'] in placement:
+                            vm_dict['worker_ip'] = placement[vm_dict['vm_id']]
+                            logger.info(f"VM {vm_dict['vm_id']} assigned to worker {vm_dict['worker_ip']}")
+                else:
+                    # Fallback to round-robin
+                    logger.warning("GA not available, using round-robin fallback")
+                    for vm_dict in pending_vms:
+                        if vm_dict.get("worker_ip") == "PENDING":
+                            vm_dict['worker_ip'] = self.get_next_worker(availability_zone)
+                
+                # Save updated placement
+                self.db.update_slice(slice_id, slice_data)
+            
+            # === PHASE 2: Deploy only pending VMs ===
+            if availability_zone == "linux":
+                # Create QCOW2 images and cloud-init seeds
+                from cloudinit_seed import CloudInitSeedGenerator
+                seed_generator = CloudInitSeedGenerator(self.compute_provider.executor)
+                
+                for vm_dict in pending_vms:
+                    worker_ip = vm_dict.get("worker_ip")
+                    vm_name = vm_dict.get("name")
+                    vm_id = vm_dict.get("vm_id")
+                    flavor = vm_dict.get("flavor")
+                    interfaces = vm_dict.get("interfaces", [])
+                    
+                    # Create QCOW2 if not exists
+                    if not vm_dict.get("qcow_image"):
+                        from models import Flavor
+                        flavor_spec = Flavor.get(flavor)
+                        image_path = flavor_spec.get("image") if flavor_spec else None
+                        
+                        if image_path:
+                            logger.info(f"Creating QCOW2 image for VM {vm_id} ({vm_name}) on {worker_ip}")
+                            from qcow_manager import QCOWManager
+                            qcow_mgr = QCOWManager(self.compute_provider.executor)
+                            success, qcow_img = qcow_mgr.create_backing_image(
+                                worker_ip, slice_id, vm_id, vm_name, image_path, []
+                            )
+                            if success:
+                                vm_dict["qcow_image"] = qcow_img
+                            else:
+                                logger.error(f"Failed to create QCOW2 for VM {vm_id}")
+                                continue
+                    
+                    # Generate cloud-init seed
+                    logger.info(f"Generating cloud-init seed for VM {vm_id} ({vm_name})")
+                    success, seed_iso = seed_generator.generate_seed_iso(
+                        worker_ip, vm_id, vm_name, interfaces
+                    )
+                    if success:
+                        vm_dict["seed_iso"] = seed_iso
+                    
+                    # Launch VM
+                    logger.info(f"Deploying VM {vm_id} on {worker_ip}")
+                    success, pid = compute_provider.launch_vm(worker_ip, vm_dict)
+                    
+                    if success:
+                        vm_dict["status"] = "deployed"
+                        vm_dict["pid"] = pid
+                        logger.info(f"VM {vm_id} started with PID {pid}")
+                    else:
+                        logger.error(f"Failed to start VM {vm_id}")
+                        return False, f"Failed to start VM {vm_id}"
+            
+            # Save final state
+            self.db.update_slice(slice_id, slice_data)
+            
+            logger.info(f"Deploy Edition completed: {len(pending_vms)} VMs deployed")
+            return True, f"{len(pending_vms)} VMs deployed successfully"
+            
+        except Exception as e:
+            logger.error(f"Deploy Edition error: {e}")
+            return False, str(e)
+    
     def delete_slice(self, username, slice_id):
         """Delete slice using pluggable providers based on availability zone"""
         try:

@@ -550,6 +550,39 @@ async def api_deploy_slice(slice_id: int, request: Request):
     
     return {"success": True, "message": "Deployment started", "status": "provisioning"}
 
+@app.post("/api/slices/{slice_id}/deploy-edition")
+async def api_deploy_edition(slice_id: int, request: Request):
+    """Deploy only pending VMs in an already deployed slice (Deploy Edition)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    slice_data = db.get_slice(str(slice_id))
+    if not slice_data:
+        raise HTTPException(status_code=404, detail="Slice not found")
+    
+    if slice_data.get("owner") != user:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    if slice_data.get("status") != "deployed":
+        raise HTTPException(status_code=400, detail="Slice must be deployed to use Deploy Edition")
+    
+    logger.info(f"Starting Deploy Edition for slice {slice_id}")
+    
+    # Deploy pending VMs in background
+    import threading
+    def deploy_edition_background():
+        try:
+            success, msg = orchestrator.deploy_slice_edition(user, slice_id)
+            if not success:
+                logger.error(f"Deploy Edition failed for slice {slice_id}: {msg}")
+        except Exception as e:
+            logger.error(f"Deploy Edition exception for slice {slice_id}: {e}")
+    
+    threading.Thread(target=deploy_edition_background, daemon=True).start()
+    
+    return {"success": True, "message": "Deploy Edition started"}
+
 @app.delete("/api/slices/{slice_id}")
 async def api_delete_slice(slice_id: int, request: Request):
     user = verify_session(request)

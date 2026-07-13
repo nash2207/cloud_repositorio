@@ -126,6 +126,7 @@
                 <button onclick="openModal('addVMModal')" id="addVMBtn" disabled class="w-full bg-green-600 hover:bg-green-700 py-2 rounded transition text-sm disabled:opacity-50 disabled:cursor-not-allowed">🖥️ Add VM</button>
                 <button onclick="openModal('topologyModal')" id="topologyBtn" disabled class="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded transition text-sm disabled:opacity-50 disabled:cursor-not-allowed">🔷 Create Topology</button>
                 <button onclick="startLinkMode(event)" id="linkModeBtn" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded transition text-sm">🔗 Create Link</button>
+                <button onclick="deployEdition()" id="deployEditionBtn" class="hidden w-full bg-orange-600 hover:bg-orange-700 py-2 rounded transition text-sm font-semibold">🚀 Deploy Edition</button>
             </div>
             <div class="p-4 border-b border-gray-700">
                 <h3 class="text-sm font-semibold text-gray-400 mb-3">RESOURCE USAGE</h3>
@@ -142,7 +143,8 @@
                 <h3 class="text-sm font-semibold text-gray-400 mb-3">MY SLICES</h3>
                 <div id="slicesList" class="space-y-2"><p class="text-gray-500 text-sm text-center py-8">No slices yet</p></div>
             </div>
-            <div class="p-4 border-t border-gray-700">
+            <div class="p-4 border-t border-gray-700 space-y-2">
+                <button onclick="openModal('imageManagerModal')" class="w-full bg-indigo-600 hover:bg-indigo-700 py-2 rounded text-sm transition">💾 Manage Images</button>
                 <button onclick="cleanupOrphaned()" class="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded text-sm transition">🧹 Cleanup Orphaned VMs</button>
             </div>
         </aside>
@@ -373,6 +375,56 @@
             </div>
         </div>
     </div>
+    
+    <div id="imageManagerModal" class="modal">
+        <div class="bg-gray-800 p-6 rounded-lg w-[700px] shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-bold mb-4">💾 Image Manager</h2>
+            
+            <!-- Upload New Image -->
+            <div class="border border-gray-600 rounded p-4 mb-4">
+                <h3 class="font-semibold mb-2">📤 Upload New Image</h3>
+                <p class="text-xs text-gray-400 mb-3">Upload a QCOW2 base image to use for VMs</p>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Image Name</label>
+                        <input type="text" id="newImageName" placeholder="ubuntu-22.04" class="w-full px-3 py-2 bg-gray-700 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Image URL or Path</label>
+                        <input type="text" id="newImagePath" placeholder="/var/lib/images/ubuntu-22.04.qcow2" class="w-full px-3 py-2 bg-gray-700 rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none">
+                    </div>
+                    <button onclick="uploadImage()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition">Add Image</button>
+                </div>
+            </div>
+            
+            <!-- Available Images -->
+            <div class="border border-gray-600 rounded p-4">
+                <h3 class="font-semibold mb-2">📚 Available Images</h3>
+                <p class="text-xs text-gray-400 mb-3">Manage base images for VM creation</p>
+                <div id="imageList" class="space-y-2">
+                    <!-- Populated by JavaScript -->
+                    <div class="bg-gray-700 p-3 rounded flex justify-between items-center">
+                        <div>
+                            <p class="text-sm font-semibold">cirros</p>
+                            <p class="text-xs text-gray-400">/var/lib/images/cirros-0.5.2-x86_64-disk.img</p>
+                        </div>
+                        <span class="text-xs bg-green-600 px-2 py-1 rounded">Default</span>
+                    </div>
+                    <div class="bg-gray-700 p-3 rounded flex justify-between items-center">
+                        <div>
+                            <p class="text-sm font-semibold">ubuntu</p>
+                            <p class="text-xs text-gray-400">/var/lib/images/ubuntu-22.04-server-cloudimg-amd64.img</p>
+                        </div>
+                        <span class="text-xs bg-green-600 px-2 py-1 rounded">Default</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-4">
+                <button onclick="closeModal('imageManagerModal')" class="w-full bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Close</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         let network = null, currentSliceId = null, currentSliceData = null, deployInterval = null, selectedVMs = [], allSlices = [];
@@ -504,10 +556,24 @@
             const isDesign = currentSliceData && currentSliceData.status === 'design';
             const isDeployed = currentSliceData && currentSliceData.status === 'deployed';
             
-            // LIVE EDIT: Allow VM/topology creation in both design AND deployed states
+            // Allow VM/topology creation in both design AND deployed states
             document.getElementById('addVMBtn').disabled = !hasSlice;
-            document.getElementById('topologyBtn').disabled = !hasSlice || !isDesign;  // Topology only in design
+            document.getElementById('topologyBtn').disabled = !hasSlice;  // Enable in all states
             document.getElementById('deployBtn').disabled = !hasSlice || !isDesign;
+            
+            // Show "Deploy Edition" button only when slice is deployed and has pending VMs
+            const deployEditionBtn = document.getElementById('deployEditionBtn');
+            if (deployEditionBtn && isDeployed && currentSliceData) {
+                const pendingVMs = currentSliceData.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+                if (pendingVMs.length > 0) {
+                    deployEditionBtn.classList.remove('hidden');
+                    deployEditionBtn.disabled = false;
+                } else {
+                    deployEditionBtn.classList.add('hidden');
+                }
+            } else if (deployEditionBtn) {
+                deployEditionBtn.classList.add('hidden');
+            }
         }
 
         async function changeActiveSlice() {
@@ -990,6 +1056,55 @@
                 showToast('Deploy failed: ' + err.message, 'error'); 
             }
         }
+        
+        async function deployEdition() {
+            if (!currentSliceId) return;
+            
+            const pendingVMs = currentSliceData.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+            
+            if (pendingVMs.length === 0) {
+                showToast('No pending VMs to deploy', 'info');
+                return;
+            }
+            
+            // Show toast
+            showToast(`🚀 Deploying ${pendingVMs.length} new VMs to existing slice...`, 'info');
+            
+            try {
+                // Show progress bar
+                showDeployProgress(`Deploying ${pendingVMs.length} new VMs...`, 0);
+                
+                // Call deploy edition endpoint
+                await apiCall(`/api/slices/${currentSliceId}/deploy-edition`, { method: 'POST' });
+                
+                // Poll for completion
+                let progress = 10;
+                if (deployInterval) clearInterval(deployInterval);
+                deployInterval = setInterval(async () => {
+                    const slice = await apiCall(`/api/slices/${currentSliceId}`);
+                    
+                    // Check how many VMs are still pending
+                    const stillPending = slice.vms.filter(vm => vm.status !== 'deployed' || vm.worker_ip === 'PENDING');
+                    
+                    if (stillPending.length === 0) {
+                        clearInterval(deployInterval);
+                        updateDeployProgress('✓ Edition deployed!', 100);
+                        showToast('✓ New VMs deployed successfully!', 'success');
+                        setTimeout(() => hideDeployProgress(), 2000);
+                        await loadSlices();
+                        await viewSlice(currentSliceId);
+                    } else {
+                        progress = Math.min(progress + 10, 90);
+                        updateDeployProgress(`Deploying VMs... (${stillPending.length} remaining)`, progress);
+                    }
+                }, 2000);
+                
+                await loadSlices();
+            } catch (err) {
+                hideDeployProgress();
+                showToast('Deploy edition failed: ' + err.message, 'error');
+            }
+        }
 
         async function deleteCurrentSlice() {
             if (!currentSliceId) return;
@@ -1143,6 +1258,34 @@
             showToast('🧹 Cleaning up orphaned VMs...', 'info');
             try { await apiCall('/api/cleanup-orphaned', { method: 'POST' }); await loadSlices(); await loadQuotas(); showToast('Cleanup completed', 'success'); }
             catch (err) { showToast('Error: ' + err.message, 'error'); }
+        }
+        
+        async function uploadImage() {
+            const imageName = document.getElementById('newImageName').value.trim();
+            const imagePath = document.getElementById('newImagePath').value.trim();
+            
+            if (!imageName || !imagePath) {
+                showToast('Please provide image name and path', 'warning');
+                return;
+            }
+            
+            showToast(`📤 Adding image '${imageName}'...`, 'info');
+            
+            try {
+                await apiCall('/api/images', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: imageName, path: imagePath })
+                });
+                
+                showToast(`✓ Image '${imageName}' added successfully!`, 'success');
+                document.getElementById('newImageName').value = '';
+                document.getElementById('newImagePath').value = '';
+                
+                // Reload image list would go here if you implement it
+            } catch (err) {
+                showToast('Error adding image: ' + err.message, 'error');
+            }
         }
 
         // ============= User Management Functions (Admin Only) =============
