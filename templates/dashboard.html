@@ -258,18 +258,18 @@
         </div>
     </div>
 
-    <div id="createLinkModal" class="modal" onclick="if(event.target === this) { console.log('Modal background clicked - ignoring'); event.stopPropagation(); }">
+    <div id="createLinkModal" class="modal">
         <div class="bg-gray-800 p-6 rounded-lg w-96 shadow-2xl" onclick="event.stopPropagation()">
             <h2 class="text-xl font-bold mb-4">Create Link</h2>
-            <p class="text-sm text-gray-400 mb-2">Click two VMs in the topology to connect them</p>
+            <p class="text-sm text-gray-400 mb-2">⚠️ Click two VMs behind this dialog to connect them</p>
             <p class="text-sm text-blue-400 mb-4">Selected: <span id="selectedVMsInfo">None</span></p>
             <div class="bg-gray-700 p-3 rounded mb-4">
                 <p class="text-xs text-gray-300">✓ Interfaces created automatically</p>
                 <p class="text-xs text-gray-300">✓ VLAN assigned from slice pool</p>
             </div>
             <div class="flex gap-2">
-                <button onclick="confirmLinkCreation()" id="confirmLinkBtn" disabled class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded transition disabled:opacity-50">Create</button>
-                <button type="button" onclick="cancelLinkMode()" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
+                <button onclick="event.stopPropagation(); confirmLinkCreation();" id="confirmLinkBtn" disabled class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded transition disabled:opacity-50">Create</button>
+                <button type="button" onclick="event.stopPropagation(); cancelLinkMode();" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded transition">Cancel</button>
             </div>
         </div>
     </div>
@@ -699,11 +699,9 @@
             console.log('About to open modal...');
             openModal('createLinkModal');
             
-            // Show alert to make it obvious
-            alert('✓ LINK MODE ACTIVATED!\n\nNow click on VMs in the topology to select them.\n\n1st click = Select first VM\n2nd click = Select second VM\nThen click "Create" button');
-            
             console.log('✓ Link mode started - Click on VMs to select them');
             console.log('✓ Modal should now be open, linkMode =', linkMode);
+            console.log('✓ Now you can click on VMs through the semi-transparent modal');
             console.log('==========================');
         }
 
