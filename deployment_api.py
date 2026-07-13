@@ -74,18 +74,24 @@ class DeploymentAPI:
             
             # Generate MAC for management interface only
             macs = self.generate_unique_macs(vm_id, count=1)
-            mgmt_ip = f"10.60.7.{100 + vm_id % 100}"
+            
+            # Static IP allocation for internet interface (VLAN 400)
+            # Linux cluster: 10.60.8.129-252 (avoid .253 DHCP server, .254 gateway)
+            # Allocate from pool: .129 + (vm_id % 120) to avoid conflicts
+            mgmt_ip = f"10.60.8.{129 + (vm_id % 120)}"
             
             interfaces = []
             
             # Only management interface (eth0 or ens3)
             mgmt_iface_name = Flavor.get_interface_name(flavor_name, 0)
             if internet_enabled:
+                # Store IP as string with CIDR notation for cloud-init
+                # /25 netmask = 10.60.8.128/25 (IPs .129-.254)
                 interfaces.append(Interface(
                     mgmt_iface_name, 
                     vlan_id=400, 
                     mac=macs[0],
-                    ip_config={"ip": mgmt_ip, "cidr": "10.60.7.0/24", "gateway": "10.60.7.1"}
+                    ip_config=f"{mgmt_ip}/25"  # e.g., "10.60.8.150/25"
                 ))
             else:
                 interfaces.append(Interface(mgmt_iface_name, vlan_id=None, mac=macs[0], ip_config=None))

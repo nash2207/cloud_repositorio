@@ -86,11 +86,11 @@ class BareMetalComputeProvider(BaseComputeProvider):
                 for iface in interfaces:
                     vlan_id = iface.get("vlan_id") if isinstance(iface, dict) else iface.vlan_id
                     if vlan_id == 400:
-                        ip_config = iface.get("ip_config", {}) if isinstance(iface, dict) else iface.ip_config
-                        static_ip = ip_config.get("ip") if ip_config else None
+                        ip_config = iface.get("ip_config") if isinstance(iface, dict) else iface.ip_config
                         iface_name = iface["name"] if isinstance(iface, dict) else iface.name
-                        if static_ip:
-                            logger.info(f"VM {vm_name} should use static IP {static_ip} on {iface_name}")
+                        if ip_config:
+                            # ip_config is now a simple string like "10.60.7.193/25"
+                            logger.info(f"VM {vm_name} should use static IP {ip_config} on {iface_name}")
                 
                 return True, pid.strip() if success_pid else None
             else:
