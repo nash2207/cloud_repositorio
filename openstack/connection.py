@@ -4,9 +4,17 @@ Creates authenticated OpenStack SDK connections using environment or config
 """
 import os
 import logging
-import openstack
 
 logger = logging.getLogger(__name__)
+
+# Import OpenStack SDK with proper error handling
+try:
+    import openstack
+    from openstack import connection
+    HAS_OPENSTACK = True
+except ImportError as e:
+    HAS_OPENSTACK = False
+    logger.error(f"OpenStack SDK not available: {e}")
 
 
 def create_admin_connection(auth_url=None, admin_username=None, admin_password=None, admin_project=None):
@@ -28,6 +36,11 @@ def create_admin_connection(auth_url=None, admin_username=None, admin_password=N
     Raises:
         RuntimeError: If connection cannot be established
     """
+    if not HAS_OPENSTACK:
+        raise RuntimeError(
+            "OpenStack SDK not installed. Run: pip install openstacksdk"
+        )
+    
     # Use provided values or fall back to environment variables or defaults
     auth_url = auth_url or os.environ.get("OS_AUTH_URL", "http://10.60.8.1:5000/v3")
     admin_username = admin_username or os.environ.get("OS_USERNAME", "admin")
@@ -43,8 +56,8 @@ def create_admin_connection(auth_url=None, admin_username=None, admin_password=N
     logger.info(f"Creating OpenStack connection to {auth_url} as {admin_username}")
     
     try:
-        # Create connection using OpenStack SDK
-        connection = openstack.connect(
+        # Create connection using OpenStack SDK connection factory
+        conn = connection.Connection(
             auth_url=auth_url,
             project_name=admin_project,
             username=admin_username,
@@ -56,10 +69,10 @@ def create_admin_connection(auth_url=None, admin_username=None, admin_password=N
         )
         
         # Verify connection by authorizing
-        connection.authorize()
+        conn.authorize()
         
         logger.info("OpenStack connection established successfully")
-        return connection
+        return conn
         
     except Exception as e:
         raise RuntimeError(f"Failed to create OpenStack connection: {e}")
@@ -84,10 +97,15 @@ def create_project_connection(auth_url, project_id, username, password):
     Raises:
         RuntimeError: If connection cannot be established
     """
+    if not HAS_OPENSTACK:
+        raise RuntimeError(
+            "OpenStack SDK not installed. Run: pip install openstacksdk"
+        )
+    
     logger.info(f"Creating scoped connection for project {project_id}")
     
     try:
-        connection = openstack.connect(
+        conn = connection.Connection(
             auth_url=auth_url,
             project_id=project_id,
             username=username,
@@ -98,10 +116,11 @@ def create_project_connection(auth_url, project_id, username, password):
             app_version="1.0",
         )
         
-        connection.authorize()
+        conn.authorize()
         
         logger.info(f"Scoped connection established for project {project_id}")
-        return connection
+        return conn
         
     except Exception as e:
         raise RuntimeError(f"Failed to create scoped connection: {e}")
+

@@ -151,8 +151,10 @@ class OVSNetworkProvider(BaseNetworkProvider):
             # --keep-in-foreground: Prevent double-fork (incompatible with netns)
             # --log-dhcp: Enable DHCP transaction logging
             # --log-facility=-: Log to stderr
+            # --dhcp-leasefile: Persistent lease tracking (prevents duplicate IPs)
             # nohup + setsid: Properly daemonize to survive SSH session close
-            cmd6 = f"sudo ip netns exec {ns_name} bash -c 'nohup dnsmasq --port=0 --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --log-dhcp --log-facility=- > /var/log/dnsmasq-vlan{vlan_id}.log 2>&1 &'"
+            lease_file = f"/var/lib/misc/dnsmasq-vlan{vlan_id}.leases"
+            cmd6 = f"sudo ip netns exec {ns_name} bash -c 'nohup dnsmasq --port=0 --interface={dhcp_port} --bind-interfaces --dhcp-range={dhcp_range},24h --dhcp-option=3,{gateway_ip} --dhcp-option=6,8.8.8.8 --dhcp-leasefile={lease_file} --log-dhcp --log-facility=- > /var/log/dnsmasq-vlan{vlan_id}.log 2>&1 &'"
             success, output = self.executor.execute_direct(self.network_node_ip, cmd6, timeout=10)
             
             if not success:
