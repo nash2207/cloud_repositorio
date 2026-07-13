@@ -148,6 +148,8 @@ class OrchestratorAPI:
         return worker
     
     def create_slice(self, username, slice_name, topology_type="custom", availability_zone="linux"):
+        from audit_log import log_slice_action
+        
         user = self.db.get_user(username)
         if not user:
             return False, "User not found"
@@ -167,6 +169,13 @@ class OrchestratorAPI:
                 user["slices"] = []
             user["slices"].append(slice_id)
             self.db.update_user(username, user)
+            
+            log_slice_action(
+                username,
+                f"Created slice '{slice_name}'",
+                slice_id,
+                {"availability_zone": availability_zone, "vlan_pool": f"{slice_obj.vlan_pool_start}-{slice_obj.vlan_pool_end}"}
+            )
             
             logger.info(f"Slice {slice_id} created for {username} in AZ '{availability_zone}' (VLAN pool: {slice_obj.vlan_pool_start}-{slice_obj.vlan_pool_end})")
             return True, {"slice_id": slice_id, "name": slice_name, "availability_zone": availability_zone}

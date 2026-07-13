@@ -152,29 +152,35 @@ class CloudInitSeedGenerator:
             vlan_id = iface_dict.get('vlan_id')
             ip_config = iface_dict.get('ip_config')
             
-            # VLAN 400 = Internet interface with static IP
-            if vlan_id == 400 and ip_config:
-                # Parse IP address (format: "10.60.7.183/25")
-                # Gateway: 10.60.8.254
-                if '/' in ip_config:
-                    ip_addr = ip_config  # CIDR notation
-                else:
-                    ip_addr = f"{ip_config}/25"  # Add default netmask
-                
-                ethernets[iface_name] = {
-                    'dhcp4': False,
-                    'dhcp6': False,
-                    'addresses': [ip_addr],
-                    'routes': [
-                        {
-                            'to': '0.0.0.0/0',  # Default route
-                            'via': '10.60.8.254'  # Gateway
+            # VLAN 400 = Internet interface
+            if vlan_id == 400:
+                if ip_config:
+                    # Has static IP (from previous deployment) - use static config
+                    if '/' in ip_config:
+                        ip_addr = ip_config  # CIDR notation
+                    else:
+                        ip_addr = f"{ip_config}/25"  # Add default netmask
+                    
+                    ethernets[iface_name] = {
+                        'dhcp4': False,
+                        'dhcp6': False,
+                        'addresses': [ip_addr],
+                        'routes': [
+                            {
+                                'to': '0.0.0.0/0',  # Default route
+                                'via': '10.60.8.254'  # Gateway
+                            }
+                        ],
+                        'nameservers': {
+                            'addresses': ['10.60.8.254', '8.8.8.8']
                         }
-                    ],
-                    'nameservers': {
-                        'addresses': ['10.60.8.254', '8.8.8.8']
                     }
-                }
+                else:
+                    # No IP yet (initial deployment) - use DHCP to get IP from network node
+                    ethernets[iface_name] = {
+                        'dhcp4': True,
+                        'dhcp6': False
+                    }
             else:
                 # Topology interfaces use DHCP
                 ethernets[iface_name] = {

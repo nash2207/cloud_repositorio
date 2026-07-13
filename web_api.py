@@ -316,6 +316,7 @@ async def api_create_user(user_req: CreateUserRequest, request: Request):
     
     # Import user provisioning service
     from user_provisioning import provision_user_with_openstack
+    from audit_log import log_admin_action
     
     # Create user with OpenStack integration
     success, result = provision_user_with_openstack(
@@ -327,12 +328,28 @@ async def api_create_user(user_req: CreateUserRequest, request: Request):
     )
     
     if success:
+        log_admin_action(
+            user, 
+            f"Created user '{user_req.username}'", 
+            {
+                "new_user": user_req.username,
+                "role": user_req.role,
+                "quota_vms": user_req.quota_vms,
+                "openstack_provisioned": "openstack" in result
+            }
+        )
         return {
             "success": True, 
             "username": user_req.username,
             "openstack_provisioned": "openstack" in result
         }
     else:
+        log_admin_action(
+            user, 
+            f"Failed to create user '{user_req.username}'", 
+            {"error": result},
+            level="ERROR"
+        )
         raise HTTPException(status_code=400, detail=result)
 
 @app.delete("/api/users/{username}")
@@ -352,6 +369,8 @@ async def api_delete_user(username: str, request: Request):
     target_user = db.get_user(username)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    from audit_log import log_admin_action
     
     logger.info(f"Deleting user {username} - syncing with OpenStack")
     
@@ -394,6 +413,16 @@ async def api_delete_user(username: str, request: Request):
     with db.lock:
         del db.data["users"][username]
         db.save()
+    
+    log_admin_action(
+        user,
+        f"Deleted user '{username}'",
+        {
+            "deleted_user": username,
+            "slices_deleted": len(target_user.get("slices", [])),
+            "openstack_cleanup": "openstack" in target_user
+        }
+    )
     
     logger.info(f"User {username} deleted successfully")
     return {"success": True, "message": f"User {username} deleted"}
@@ -885,6 +914,100 @@ async def api_get_openstack_resources(request: Request):
     except Exception as e:
         logger.error(f"Failed to get OpenStack resources: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/images")
+async def api_add_image(request: Request):
+    """Add a new image to the system (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        data = await request.json()
+        image_name = data.get("name", "").strip()
+        image_path = data.get("path", "").strip()
+        
+        if not image_name or not image_path:
+            raise HTTPException(status_code=400, detail="Image name and path are required")
+        
+        # Add to models.Flavor
+        from models import Flavor
+        
+        if image_name in Flavor.FLAVORS:
+            raise HTTPException(status_code=400, detail=f"Image '{image_name}' already exists")
+        
+        # Add new flavor entry
+        Flavor.FLAVORS[image_name] = {
+            "cores": 1,
+            "ram_gb": 0.5,
+            "disk_gb": 2.5,
+            "image": image_path,
+            "interface_prefix": "ens"
+        }
+        
+        logger.info(f"Admin {user} added new image: {image_name} -> {image_path}")
+        
+        return {
+            "success": True,
+            "message": f"Image '{image_name}' added successfully",
+            "image": {
+                "name": image_name,
+                "path": image_path
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add image: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/images")
+async def api_list_images(request: Request):
+    """List all available images"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    from models import Flavor
+    
+    images = []
+    for name, spec in Flavor.FLAVORS.items():
+        images.append({
+            "name": name,
+            "path": spec.get("image"),
+            "cores": spec.get("cores"),
+            "ram_gb": spec.get("ram_gb"),
+            "disk_gb": spec.get("disk_gb")
+        })
+    
+    return {"images": images}
+
+# ============= Audit Logs API =============
+@app.get("/api/audit/logs")
+async def api_get_audit_logs(request: Request, limit: int = 100, event_type: str = None):
+    """Get audit logs (admin only)"""
+    user = verify_session(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user_data = db.get_user(user)
+    if user_data.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from audit_log import audit_logger
+    
+    logs = audit_logger.get_logs(limit=limit, event_type=event_type)
+    summary = audit_logger.get_logs_summary()
+    
+    return {
+        "logs": logs,
+        "summary": summary
+    }
         raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
     
     return {

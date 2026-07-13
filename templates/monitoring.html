@@ -164,6 +164,42 @@
                 </table>
             </div>
         </div>
+
+        <!-- Audit Logs Section -->
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">📜 Audit Logs</h3>
+                <div class="flex gap-2">
+                    <select id="logFilter" onchange="filterLogs()" class="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm">
+                        <option value="">All Events</option>
+                        <option value="USER">User Events</option>
+                        <option value="SLICE">Slice Events</option>
+                        <option value="VM">VM Events</option>
+                        <option value="NETWORK">Network Events</option>
+                        <option value="ADMIN">Admin Actions</option>
+                    </select>
+                    <button onclick="refreshAuditLogs()" class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm transition">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-700 sticky top-0">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Timestamp</th>
+                            <th class="px-4 py-3 text-left">Type</th>
+                            <th class="px-4 py-3 text-left">User</th>
+                            <th class="px-4 py-3 text-left">Action</th>
+                            <th class="px-4 py-3 text-left">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="auditLogsTable" class="divide-y divide-gray-700">
+                        <tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -175,6 +211,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             initCharts();
             selectCluster('linux');
+            refreshAuditLogs(); // Load audit logs
         });
 
         function initCharts() {
@@ -381,6 +418,71 @@
         function logout() {
             fetch('/api/logout', { method: 'POST' })
                 .then(() => window.location.href = '/login');
+        }
+
+        // Audit Logs Functions
+        async function refreshAuditLogs() {
+            const filter = document.getElementById('logFilter').value;
+            const url = filter ? `/api/audit/logs?event_type=${filter}` : '/api/audit/logs';
+            
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`API returned ${response.status}`);
+                
+                const data = await response.json();
+                updateAuditLogsTable(data.logs);
+            } catch (error) {
+                console.error('Error fetching audit logs:', error);
+                document.getElementById('auditLogsTable').innerHTML = 
+                    '<tr><td colspan="5" class="px-4 py-4 text-center text-red-500">Error loading logs</td></tr>';
+            }
+        }
+
+        function filterLogs() {
+            refreshAuditLogs();
+        }
+
+        function updateAuditLogsTable(logs) {
+            const tbody = document.getElementById('auditLogsTable');
+            
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No audit logs found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = logs.map(log => {
+                const levelColors = {
+                    'ERROR': 'bg-red-900 text-red-200',
+                    'WARNING': 'bg-yellow-900 text-yellow-200',
+                    'INFO': 'bg-blue-900 text-blue-200'
+                };
+                const levelClass = levelColors[log.level] || levelColors['INFO'];
+
+                const typeColors = {
+                    'USER': 'bg-purple-600',
+                    'SLICE': 'bg-blue-600',
+                    'VM': 'bg-green-600',
+                    'NETWORK': 'bg-yellow-600',
+                    'ADMIN': 'bg-red-600'
+                };
+                const typeClass = typeColors[log.event_type] || 'bg-gray-600';
+
+                const details = Object.entries(log.details || {})
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ');
+
+                return `
+                    <tr class="hover:bg-gray-700 transition ${levelClass}">
+                        <td class="px-4 py-2 text-xs font-mono">${log.timestamp}</td>
+                        <td class="px-4 py-2">
+                            <span class="px-2 py-1 rounded text-xs font-semibold ${typeClass}">${log.event_type}</span>
+                        </td>
+                        <td class="px-4 py-2 font-medium">${log.username}</td>
+                        <td class="px-4 py-2">${log.action}</td>
+                        <td class="px-4 py-2 text-xs text-gray-400">${details || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         // Cleanup on page unload
