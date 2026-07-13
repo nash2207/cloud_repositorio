@@ -463,17 +463,24 @@
             
             // Double-click opens VM edit modal
             network.on('doubleClick', (params) => {
-                console.log('Double-click event:', params);
+                console.log('=== DOUBLE-CLICK EVENT ===');
+                console.log('Params:', params);
+                console.log('Link mode:', linkMode);
                 if (params.nodes.length > 0 && !linkMode) {
                     console.log('Opening edit modal for VM:', params.nodes[0]);
                     openEditVMModal(params.nodes[0]);
+                } else if (params.nodes.length > 0 && linkMode) {
+                    console.log('Ignoring double-click in link mode');
                 }
+                console.log('========================');
             });
             
             // Single click for link mode selection
             network.on('click', (params) => {
-                console.log('Click event:', params);
+                console.log('=== CLICK EVENT ===');
+                console.log('Params:', params);
                 console.log('Link mode active:', linkMode);
+                console.log('Nodes clicked:', params.nodes);
                 
                 if (params.nodes.length > 0 && linkMode) {
                     // Handle link mode selection
@@ -481,21 +488,30 @@
                     handleNodeClickForLink(params.nodes[0]);
                     // Immediately clear vis.js selection to prevent interference
                     setTimeout(() => network.unselectAll(), 0);
+                } else if (params.nodes.length > 0 && !linkMode) {
+                    console.log('⚠️ Click ignored: Link mode is NOT active');
+                    console.log('⚠️ Click "🔗 Create Link" button first to enter link mode');
                 } else if (params.nodes.length === 0 && linkMode) {
                     // Clicked on empty space - don't deselect our custom selection
                     console.log('Empty space clicked in link mode');
                     setTimeout(() => network.unselectAll(), 0);
                 }
+                console.log('===================');
             });
             
             // Prevent vis.js from handling selection during link mode
             network.on('selectNode', (params) => {
-                console.log('selectNode event:', params);
+                console.log('=== SELECT NODE EVENT ===');
+                console.log('Params:', params);
+                console.log('Link mode:', linkMode);
                 if (linkMode) {
                     // Immediately deselect to prevent vis.js interference
                     console.log('Blocking vis.js selection in link mode');
                     setTimeout(() => network.unselectAll(), 0);
+                } else {
+                    console.log('selectNode event in normal mode (not link mode)');
                 }
+                console.log('=========================');
             });
         }
 
@@ -641,15 +657,25 @@
         }
 
         function startLinkMode() {
-            if (!currentSliceId || currentSliceData.status !== 'design') { alert('Can only create links in design state'); return; }
+            if (!currentSliceId || currentSliceData.status !== 'design') { 
+                alert('Can only create links in design state'); 
+                return; 
+            }
             console.log('=== STARTING LINK MODE ===');
             linkMode = true; 
             selectedVMs = []; 
             console.log('Link mode:', linkMode);
             console.log('Selected VMs cleared:', selectedVMs);
+            
+            // Visual feedback: Change button to show link mode is active
+            const linkBtn = document.getElementById('linkModeBtn');
+            linkBtn.textContent = '⚠️ Link Mode Active';
+            linkBtn.className = 'w-full bg-orange-600 hover:bg-orange-700 py-2 rounded transition text-sm font-bold';
+            
             updateSelectedVMsInfo();
             document.getElementById('confirmLinkBtn').disabled = true;
             openModal('createLinkModal');
+            console.log('✓ Link mode started - Click on VMs to select them');
             console.log('==========================');
         }
 
@@ -659,6 +685,12 @@
             selectedVMs = []; 
             console.log('Link mode:', linkMode);
             console.log('Selected VMs cleared:', selectedVMs);
+            
+            // Reset button appearance
+            const linkBtn = document.getElementById('linkModeBtn');
+            linkBtn.textContent = '🔗 Create Link';
+            linkBtn.className = 'w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded transition text-sm';
+            
             closeModal('createLinkModal'); 
             if (network) {
                 console.log('Redrawing topology...');
