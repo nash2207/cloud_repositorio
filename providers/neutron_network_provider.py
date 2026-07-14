@@ -338,12 +338,21 @@ class NeutronNetworkProvider(BaseNetworkProvider):
             str: Network ID or None if not found
         """
         try:
+            logger.info(f"Searching for OpenStack network named '{self.INTERNET_NETWORK_NAME}'...")
             networks = list(self.connection.network.networks(name=self.INTERNET_NETWORK_NAME))
+            
             if not networks:
-                logger.error(f"Internet network '{self.INTERNET_NETWORK_NAME}' not found")
+                logger.error(f"Internet network '{self.INTERNET_NETWORK_NAME}' not found in OpenStack")
+                logger.error(f"Available networks:")
+                all_networks = list(self.connection.network.networks())
+                for net in all_networks:
+                    logger.error(f"  - {net.name} (ID: {net.id})")
                 return None
             
-            return networks[0].id
+            network_id = networks[0].id
+            logger.info(f"✓ Found internet network '{self.INTERNET_NETWORK_NAME}' with ID: {network_id}")
+            logger.info(f"  This network is mapped to physical VLAN 10 (ens8 tag=10)")
+            return network_id
             
         except Exception as e:
             logger.error(f"Failed to get internet network ID: {e}")

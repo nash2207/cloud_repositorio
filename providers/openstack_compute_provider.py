@@ -52,20 +52,31 @@ class OpenStackComputeProvider(BaseComputeProvider):
             flavor_id = vm_dict.get("flavor_id")
             openstack_networks = vm_dict.get("openstack_networks", [])
             
+            logger.info(f"=== Launching VM {vm_name} ===")
+            logger.info(f"  Image ID: {image_id}")
+            logger.info(f"  Flavor ID: {flavor_id}")
+            logger.info(f"  Networks to attach: {len(openstack_networks)}")
+            
             # Build networks list for Nova (using network IDs, not ports)
             # Nova will auto-create ports and bind them to the assigned host
             networks = []
-            for net_info in openstack_networks:
+            for idx, net_info in enumerate(openstack_networks):
                 network_id = net_info.get("network_id")
+                interface_name = net_info.get("interface_name")
                 if network_id:
                     networks.append({"uuid": network_id})
+                    logger.info(f"  Network {idx+1}: {network_id} (interface: {interface_name})")
+                else:
+                    logger.warning(f"  Network {idx+1}: Missing network_id!")
             
             if not networks:
-                logger.error(f"VM {vm_name} has no networks configured")
+                logger.error(f"✗ VM {vm_name} has no networks configured")
+                logger.error(f"  openstack_networks content: {openstack_networks}")
                 return False, None
             
             # Create server using Nova API
-            logger.info(f"Creating VM {vm_name} with image {image_id}, flavor {flavor_id}, {len(networks)} network(s)")
+            logger.info(f"Calling Nova API to create server '{vm_name}'...")
+            logger.info(f"  create_server(name={vm_name}, image_id={image_id}, flavor_id={flavor_id}, networks={networks})")
             
             server = self.connection.compute.create_server(
                 name=vm_name,
@@ -74,7 +85,8 @@ class OpenStackComputeProvider(BaseComputeProvider):
                 networks=networks,
             )
             
-            logger.info(f"VM {vm_name} created with ID {server.id}, waiting for ACTIVE state...")
+            logger.info(f"✓ VM {vm_name} created with ID {server.id}, status: {server.status}")
+            logger.info(f"  Waiting for server to reach ACTIVE state (timeout: 120s)...")
             
             # Wait for server to become ACTIVE
             server = self.connection.compute.wait_for_server(
@@ -85,11 +97,15 @@ class OpenStackComputeProvider(BaseComputeProvider):
                 wait=120,  # 2 minute timeout (reduced for faster debugging)
             )
             
-            logger.info(f"VM {vm_name} is now ACTIVE (ID: {server.id})")
+            logger.info(f"✓ VM {vm_name} is now ACTIVE (ID: {server.id})")
+            logger.info(f"  Host: {getattr(server, 'OS-EXT-SRV-ATTR:host', 'unknown')}")
+            logger.info(f"  Addresses: {getattr(server, 'addresses', {})}")
             return True, server.id
             
         except Exception as e:
-            logger.error(f"Failed to launch VM {vm_dict.get('name')}: {e}")
+            logger.error(f"✗ Failed to launch VM {vm_dict.get('name')}: {e}")
+            import traceback
+            logger.error(f"  Traceback: {traceback.format_exc()}")
             return False, None
     
     def launch_vms_parallel(self, vm_assignments):
