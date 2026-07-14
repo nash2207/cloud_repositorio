@@ -25,9 +25,19 @@ class NeutronNetworkProvider(BaseNetworkProvider):
     DEFAULT_ADDRESS_POOL = "10.200.0.0/16"
     DEFAULT_PREFIX_LENGTH = 29  # /29 = 8 IPs per network
     
-    # Internet/management network (pre-existing in OpenStack)
-    INTERNET_NETWORK_NAME = "external"  # External provider network
+    # Internet/management network configuration
+    # WORKAROUND: External network is broken (flat on physnet0, requires dead headnode agents)
+    # Instead, we create a VLAN provider network on physnet1 with VLAN 10
+    # This works because:
+    # 1. Worker OVS agents are alive and can handle VLAN networks on physnet1
+    # 2. VLAN 10 traffic exits through worker ens8 trunk ports
+    # 3. Physical switch receives VLAN 10 and routes to gateway 10.60.8.126
+    INTERNET_VLAN_ID = 10  # Physical VLAN for internet access
+    INTERNET_NETWORK_NAME = "internet-access-vlan10"  # Provider VLAN network
+    INTERNET_CIDR = "10.60.8.0/24"  # Same subnet as external
     INTERNET_GATEWAY = "10.60.8.126"  # Physical switch gateway
+    INTERNET_ALLOCATION_START = "10.60.8.2"
+    INTERNET_ALLOCATION_END = "10.60.8.125"
     
     def __init__(self, connection):
         """
@@ -332,30 +342,69 @@ class NeutronNetworkProvider(BaseNetworkProvider):
     
     def get_internet_network_id(self):
         """
-        Get the ID of the internet/external network
+        Get or create the internet access network
+        
+        WORKAROUND: The "external" flat network is broken (requires dead headnode agents).
+        Instead, we use a VLAN provider network on physnet1 with VLAN 10.
         
         Returns:
-            str: Network ID or None if not found
+            str: Network ID or None if creation fails
         """
         try:
-            logger.info(f"Searching for OpenStack network named '{self.INTERNET_NETWORK_NAME}'...")
+            logger.info(f"Searching for OpenStack internet network '{self.INTERNET_NETWORK_NAME}'...")
             networks = list(self.connection.network.networks(name=self.INTERNET_NETWORK_NAME))
             
-            if not networks:
-                logger.error(f"Internet network '{self.INTERNET_NETWORK_NAME}' not found in OpenStack")
-                logger.error(f"Available networks:")
-                all_networks = list(self.connection.network.networks())
-                for net in all_networks:
-                    logger.error(f"  - {net.name} (ID: {net.id})")
-                return None
+            if networks:
+                network_id = networks[0].id
+                logger.info(f"✓ Found existing internet network '{self.INTERNET_NETWORK_NAME}' with ID: {network_id}")
+                logger.info(f"  This is a VLAN {self.INTERNET_VLAN_ID} provider network on physnet1")
+                return network_id
             
-            network_id = networks[0].id
-            logger.info(f"✓ Found internet network '{self.INTERNET_NETWORK_NAME}' with ID: {network_id}")
-            logger.info(f"  This network is mapped to physical VLAN 10 (ens8 tag=10)")
-            return network_id
+            # Network doesn't exist - create it
+            logger.info(f"Internet network not found, creating VLAN provider network...")
+            logger.info(f"  Name: {self.INTERNET_NETWORK_NAME}")
+            logger.info(f"  Type: vlan (provider network)")
+            logger.info(f"  Physical network: physnet1")
+            logger.info(f"  VLAN ID: {self.INTERNET_VLAN_ID}")
+            logger.info(f"  CIDR: {self.INTERNET_CIDR}")
+            logger.info(f"  Gateway: {self.INTERNET_GATEWAY}")
+            
+            # Create provider network with VLAN 10
+            network = self.connection.network.create_network(
+                name=self.INTERNET_NETWORK_NAME,
+                admin_state_up=True,
+                shared=True,  # Make it available to all projects
+                provider_network_type="vlan",
+                provider_physical_network="physnet1",
+                provider_segmentation_id=self.INTERNET_VLAN_ID,
+            )
+            
+            logger.info(f"✓ Created network {network.id}")
+            
+            # Create subnet
+            subnet = self.connection.network.create_subnet(
+                name=f"{self.INTERNET_NETWORK_NAME}-subnet",
+                network_id=network.id,
+                ip_version=4,
+                cidr=self.INTERNET_CIDR,
+                gateway_ip=self.INTERNET_GATEWAY,
+                enable_dhcp=True,
+                allocation_pools=[{
+                    "start": self.INTERNET_ALLOCATION_START,
+                    "end": self.INTERNET_ALLOCATION_END
+                }],
+            )
+            
+            logger.info(f"✓ Created subnet {subnet.id} with DHCP enabled")
+            logger.info(f"  Allocation pool: {self.INTERNET_ALLOCATION_START}-{self.INTERNET_ALLOCATION_END}")
+            logger.info(f"  Traffic will exit through worker nodes on VLAN {self.INTERNET_VLAN_ID}")
+            
+            return network.id
             
         except Exception as e:
-            logger.error(f"Failed to get internet network ID: {e}")
+            logger.error(f"Failed to get/create internet network: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     def allocate_subnets(self, count, address_pool=None, prefix_length=None):

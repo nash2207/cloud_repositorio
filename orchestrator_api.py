@@ -820,7 +820,8 @@ class OrchestratorAPI:
                 
                 # === PHASE 2: Prepare Network Information for VMs ===
                 logger.info("PHASE 2: Preparing network configurations for VMs...")
-                logger.info(f"OpenStack external network uses physical VLAN 10 (mapped to 'external' network)")
+                logger.info(f"WORKAROUND: Using VLAN {network_provider.INTERNET_VLAN_ID} provider network instead of broken external network")
+                logger.info(f"  Traffic flow: VM → Worker OVS (VLAN {network_provider.INTERNET_VLAN_ID}) → ens8 trunk → Physical switch → Gateway")
                 
                 # For OpenStack, we'll let Nova auto-create ports during VM creation
                 # This avoids port binding race conditions
