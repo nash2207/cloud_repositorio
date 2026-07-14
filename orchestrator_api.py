@@ -887,7 +887,8 @@ class OrchestratorAPI:
                     
                     if len(vm_networks) == 0:
                         logger.error(f"✗ VM {vm_name}: NO NETWORKS PREPARED! VM will fail to deploy.")
-                        logger.error(f"  Check interfaces: {[{iface.get('name')}: vlan={iface.get('vlan_id')}} for iface in interfaces]}")
+                        iface_details = [(iface.get('name'), iface.get('vlan_id'), iface.get('link_id')) for iface in interfaces]
+                        logger.error(f"  Check interfaces: {iface_details}")
                         return False, f"VM {vm_name} has no valid network attachments"
                 
                 # Save updated slice data with ports
