@@ -751,12 +751,14 @@ async def api_get_vm_console(vm_id: int, request: Request):
     slice_ids = user_data.get("slices", [])
     
     vm_found = None
+    slice_found = None
     for slice_id in slice_ids:
         slice_data = db.get_slice(slice_id)
         if slice_data:
             for vm in slice_data.get("vms", []):
                 if vm["vm_id"] == vm_id:
                     vm_found = vm
+                    slice_found = slice_data
                     break
         if vm_found:
             break
@@ -770,6 +772,68 @@ async def api_get_vm_console(vm_id: int, request: Request):
         logger.error(f"VM {vm_id} not deployed, status: {vm_found.get('status')}")
         raise HTTPException(status_code=400, detail="VM is not deployed")
     
+    availability_zone = slice_found.get("availability_zone", "linux")
+    
+    # Handle OpenStack VMs differently
+    if availability_zone == "openstack":
+        logger.info(f"VM {vm_id} is on OpenStack, getting console URL from Nova")
+        
+        server_id = vm_found.get("server_id")
+        if not server_id:
+            raise HTTPException(status_code=400, detail="OpenStack server ID not available")
+        
+        try:
+            # Get OpenStack connection
+            compute_provider = orchestrator._get_compute_provider("openstack")
+            
+            # Get VNC console URL from Nova
+            console_data = compute_provider.connection.compute.create_server_remote_console(
+                server_id,
+                protocol='novnc',
+                console_type='novnc'
+            )
+            
+            # Nova returns a full URL like: http://10.60.8.1:6080/vnc_auto.html?path=%2Fvnc_lite.html%3Ftoken%3Dxxx
+            # We need to proxy this through our app
+            console_url = console_data.get('url')
+            
+            if not console_url:
+                raise HTTPException(status_code=500, detail="Failed to get console URL from Nova")
+            
+            logger.info(f"OpenStack console URL: {console_url}")
+            
+            # Extract the token from the URL
+            import urllib.parse
+            parsed = urllib.parse.urlparse(console_url)
+            token = urllib.parse.parse_qs(parsed.query).get('token', [''])[0]
+            
+            if not token:
+                # Direct proxy to Nova's noVNC
+                logger.info(f"Returning direct Nova console URL: {console_url}")
+                return {
+                    "vm_id": vm_id,
+                    "vm_name": vm_found.get("name"),
+                    "console_url": console_url,
+                    "console_type": "openstack_direct"
+                }
+            
+            # Return console URL with token
+            # OpenStack's noVNC server handles the actual VNC connection
+            logger.info(f"Returning OpenStack console URL with token")
+            return {
+                "vm_id": vm_id,
+                "vm_name": vm_found.get("name"),
+                "console_url": console_url,
+                "console_type": "openstack"
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get OpenStack console: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Failed to get OpenStack console: {str(e)}")
+    
+    # Linux cluster VM - use websockify proxy
     vnc_port = vm_found.get("vnc_port")
     worker_ip = vm_found.get("worker_ip")
     
@@ -801,7 +865,8 @@ async def api_get_vm_console(vm_id: int, request: Request):
         "vnc_port": vnc_port,
         "worker_ip": worker_ip,
         "proxy_port": proxy_port,
-        "console_url": console_url
+        "console_url": console_url,
+        "console_type": "linux"
     }
 
 
