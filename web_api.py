@@ -787,14 +787,15 @@ async def api_get_vm_console(vm_id: int, request: Request):
             compute_provider = orchestrator._get_compute_provider("openstack")
             
             # Get VNC console URL from Nova
+            # Note: protocol should be 'vnc' not 'novnc'
             console_data = compute_provider.connection.compute.create_server_remote_console(
                 server_id,
-                protocol='novnc',
+                protocol='vnc',
                 console_type='novnc'
             )
             
-            # Nova returns a full URL like: http://10.60.8.1:6080/vnc_auto.html?path=%2Fvnc_lite.html%3Ftoken%3Dxxx
-            # We need to proxy this through our app
+            # Nova returns a dict with 'url' key containing the noVNC console URL
+            # Example: http://10.60.8.1:6080/vnc_auto.html?path=%2Fvnc_lite.html%3Ftoken%3Dxxx
             console_url = console_data.get('url')
             
             if not console_url:
@@ -802,24 +803,9 @@ async def api_get_vm_console(vm_id: int, request: Request):
             
             logger.info(f"OpenStack console URL: {console_url}")
             
-            # Extract the token from the URL
-            import urllib.parse
-            parsed = urllib.parse.urlparse(console_url)
-            token = urllib.parse.parse_qs(parsed.query).get('token', [''])[0]
-            
-            if not token:
-                # Direct proxy to Nova's noVNC
-                logger.info(f"Returning direct Nova console URL: {console_url}")
-                return {
-                    "vm_id": vm_id,
-                    "vm_name": vm_found.get("name"),
-                    "console_url": console_url,
-                    "console_type": "openstack_direct"
-                }
-            
-            # Return console URL with token
-            # OpenStack's noVNC server handles the actual VNC connection
-            logger.info(f"Returning OpenStack console URL with token")
+            # Return the direct OpenStack noVNC URL
+            # OpenStack's noVNC server (on headnode:6080) handles authentication and proxying
+            logger.info(f"Returning direct OpenStack noVNC console URL")
             return {
                 "vm_id": vm_id,
                 "vm_name": vm_found.get("name"),

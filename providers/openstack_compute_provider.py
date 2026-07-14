@@ -31,6 +31,51 @@ class OpenStackComputeProvider(BaseComputeProvider):
         self.connection = connection
         self.executor = None  # No SSH executor needed for OpenStack
     
+    def check_quota(self, project_id=None):
+        """
+        Check Nova quota limits and usage
+        
+        Args:
+            project_id: Optional project ID (defaults to current project)
+        
+        Returns:
+            dict: Quota information with limits and usage
+        """
+        try:
+            # Get quota limits
+            limits = self.connection.compute.get_limits()
+            
+            # Extract absolute limits
+            absolute = limits.absolute
+            
+            quota_info = {
+                "instances": {
+                    "limit": absolute.get("max_total_instances", 0),
+                    "used": absolute.get("total_instances_used", 0),
+                    "available": absolute.get("max_total_instances", 0) - absolute.get("total_instances_used", 0)
+                },
+                "cores": {
+                    "limit": absolute.get("max_total_cores", 0),
+                    "used": absolute.get("total_cores_used", 0),
+                    "available": absolute.get("max_total_cores", 0) - absolute.get("total_cores_used", 0)
+                },
+                "ram_mb": {
+                    "limit": absolute.get("max_total_ram_size", 0),
+                    "used": absolute.get("total_ram_used", 0),
+                    "available": absolute.get("max_total_ram_size", 0) - absolute.get("total_ram_used", 0)
+                }
+            }
+            
+            logger.info(f"OpenStack Quota Check:")
+            logger.info(f"  Instances: {quota_info['instances']['used']}/{quota_info['instances']['limit']} ({quota_info['instances']['available']} available)")
+            logger.info(f"  Cores: {quota_info['cores']['used']}/{quota_info['cores']['limit']} ({quota_info['cores']['available']} available)")
+            logger.info(f"  RAM: {quota_info['ram_mb']['used']}/{quota_info['ram_mb']['limit']} MB ({quota_info['ram_mb']['available']} MB available)")
+            
+            return quota_info
+        except Exception as e:
+            logger.error(f"Failed to check OpenStack quota: {e}")
+            return None
+    
     def launch_vm(self, worker_ip, vm_dict):
         """
         Launch a VM using Nova API
